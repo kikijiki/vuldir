@@ -1,0 +1,11 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 23,
+    "patch": 0
+  },
+  "include": ["cmake-ninja.json", "cmake-vs2022.json"],
+  "testPresets": [],
+  "vendor": {}
+}

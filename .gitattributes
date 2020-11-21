@@ -1,0 +1,144 @@
+* text=auto
+
+*.sln        text eol=lf
+*.csproj     text eol=lf
+*.vbproj     text eol=lf
+*.vcxproj    text eol=lf
+*.vcproj     text eol=lf
+*.dbproj     text eol=lf
+*.fsproj     text eol=lf
+*.lsproj     text eol=lf
+*.wixproj    text eol=lf
+*.modelproj  text eol=lf
+*.sqlproj    text eol=lf
+*.wwaproj    text eol=lf
+*.xproj      text eol=lf
+*.props      text eol=lf
+*.filters    text eol=lf
+*.vcxitems   text eol=lf
+
+# Using Git LFS
+# Add diff=lfs merge=lfs to the binary files
+
+# 3D models
+*.3dm                binary
+*.3ds                binary
+*.blend              binary
+*.c4d                binary
+*.collada            binary
+*.dae                binary
+*.dxf                binary
+*.FBX                binary
+*.fbx                binary
+*.jas                binary
+*.lws                binary
+*.lxo                binary
+*.ma                 binary
+*.max                binary
+*.mb                 binary
+*.obj                binary
+*.ply                binary
+*.skp                binary
+*.stl                binary
+*.ztl                binary
+
+# Audio
+*.aif                binary
+*.aiff               binary
+*.it                 binary
+*.mod                binary
+*.mp3                binary
+*.ogg                binary
+*.s3m                binary
+*.wav                binary
+*.xm                 binary
+
+# Video
+*.asf                binary
+*.avi                binary
+*.flv                binary
+*.mov                binary
+*.mp4                binary
+*.mpeg               binary
+*.mpg                binary
+*.ogv                binary
+*.wmv                binary
+
+# Images
+*.bmp                binary
+*.exr                binary
+*.gif                binary
+*.hdr                binary
+*.iff                binary
+*.jpeg               binary
+*.jpg                binary
+*.pict               binary
+*.png                binary
+*.psd                binary
+*.tga                binary
+*.tif                binary
+*.tiff               binary
+*.webp               binary
+
+# Compressed Archive
+*.7z                binary
+*.bz2               binary
+*.gz                binary
+*.rar               binary
+*.tar               binary
+*.zip               binary
+
+# Compiled Dynamic Library
+*.dll               binary
+*.pdb               binary
+*.so                binary
+
+# Fonts
+*.otf               binary
+*.ttf               binary
+
+# Executable/Installer
+*.apk               binary
+*.exe               binary
+
+# Documents
+*.pdf               binary
+
+# Sources
+*.c     text diff=cpp eol=lf
+*.cc    text diff=cpp eol=lf
+*.cxx   text diff=cpp eol=lf
+*.cpp   text diff=cpp eol=lf
+*.c++   text diff=cpp eol=lf
+*.hpp   text diff=cpp eol=lf
+*.h     text diff=cpp eol=lf
+*.h++   text diff=cpp eol=lf
+*.hh    text diff=cpp eol=lf
+*.hlsl  text diff=cpp eol=lf
+*.hlsli text diff=cpp eol=lf
+
+# Compiled Object files
+*.slo   binary
+*.lo    binary
+*.o     binary
+*.obj   binary
+
+# Precompiled Headers
+*.gch   binary
+*.pch   binary
+
+# Compiled Dynamic libraries
+*.so    binary
+*.dylib binary
+*.dll   binary
+
+# Compiled Static libraries
+*.lai   binary
+*.la    binary
+*.a     binary
+*.lib   binary
+
+# Executables
+*.exe   binary
+*.out   binary
+*.app   binary

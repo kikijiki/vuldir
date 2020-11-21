@@ -1,0 +1,78 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 23,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "ninja",
+      "hidden": true,
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/_build/${presetName}",
+      "cacheVariables": {},
+      "environment": {
+        "CC": "clang",
+        "CXX": "clang++",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      },
+      "vendor": {}
+    },
+    {
+      "name": "ninja-vk",
+      "inherits": "ninja",
+      "cacheVariables": {
+        "VD_API": {
+          "type": "STRING",
+          "value": "vk"
+        }
+      }
+    },
+    {
+      "name": "ninja-dx",
+      "inherits": "ninja",
+      "cacheVariables": {
+        "VD_API": {
+          "type": "STRING",
+          "value": "dx"
+        }
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "ninja-vk-debug",
+      "configurePreset": "ninja-vk",
+      "configuration": "Debug"
+    },
+    {
+      "name": "ninja-vk-release",
+      "configurePreset": "ninja-vk",
+      "configuration": "Release"
+    },
+    {
+      "name": "ninja-vk-asan",
+      "configurePreset": "ninja-vk",
+      "configuration": "ASAN"
+    },
+    {
+      "name": "ninja-dx-debug",
+      "configurePreset": "ninja-dx",
+      "configuration": "Debug"
+    },
+    {
+      "name": "ninja-dx-release",
+      "configurePreset": "ninja-dx",
+      "configuration": "Release"
+    },
+    {
+      "name": "ninja-dx-asan",
+      "configurePreset": "ninja-dx",
+      "configuration": "ASAN"
+    }
+  ],
+  "testPresets": [],
+  "vendor": {}
+}

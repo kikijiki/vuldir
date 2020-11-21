@@ -1,0 +1,74 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 23,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "vs2022",
+      "hidden": true,
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "toolset": "v143",
+      "binaryDir": "${sourceDir}/_build/${presetName}",
+      "cacheVariables": {},
+      "vendor": {}
+    },
+    {
+      "name": "vs2022-vk",
+      "inherits": "vs2022",
+      "cacheVariables": {
+        "VD_API": {
+          "type": "STRING",
+          "value": "vk"
+        }
+      }
+    },
+    {
+      "name": "vs2022-dx",
+      "inherits": "vs2022",
+      "cacheVariables": {
+        "VD_API": {
+          "type": "STRING",
+          "value": "dx"
+        }
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "vs2022-vk-debug",
+      "configurePreset": "vs2022-vk",
+      "configuration": "Debug"
+    },
+    {
+      "name": "vs2022-vk-release",
+      "configurePreset": "vs2022-vk",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2022-vk-asan",
+      "configurePreset": "vs2022-vk",
+      "configuration": "ASAN"
+    },
+    {
+      "name": "vs2022-dx-debug",
+      "configurePreset": "vs2022-dx",
+      "configuration": "Debug"
+    },
+    {
+      "name": "vs2022-dx-release",
+      "configurePreset": "vs2022-dx",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2022-dx-asan",
+      "configurePreset": "vs2022-dx",
+      "configuration": "ASAN"
+    }
+  ],
+  "testPresets": [],
+  "vendor": {}
+}

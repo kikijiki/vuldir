@@ -1,0 +1,89 @@
+name: build
+
+on: [push]
+
+jobs:
+  build:
+    name: ${{ matrix.target }}-${{ matrix.api }}-${{ matrix.config }}
+    runs-on: ${{ matrix.target }}
+    env:
+      CMAKE_VERISION: 3.24.3
+      NINJA_VERSION: 1.11.1
+      LLVM_VERSION: 15.0.4
+      VULKAN_VERSION: 1.3.231.1
+      VULKAN_APT_VERSION: 1.3.231.1
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [ vk, dx ]
+        config: [ debug, release ]
+        target: [ self-hosted ] # [ windows-latest , ubuntu ]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Get dependencies (Windows)
+      if: ${{ matrix.target != 'self-hosted' && runner.os == 'Windows' }}
+      shell: cmake -P {0}
+      run: |
+        message(STATUS "Get CMAKE")
+        file(DOWNLOAD "https://github.com/Kitware/CMake/releases/download/v$ENV{CMAKE_VERSION}/cmake-$ENV{CMAKE_VERSION}-windows-x86_64.zip" ./cmake.zip)
+        execute_process(COMMAND ${CMAKE_COMMAND} -E tar xvf ./cmake.zip)
+        set(cmake_dir "cmake-$ENV{CMAKE_VERSION}-windows-x86_64/bin")
+        file(TO_CMAKE_PATH "$ENV{GITHUB_WORKSPACE}/${cmake_dir}" cmake_dir)
+
+        message(STATUS "Get NINJA")
+        file(DOWNLOAD "https://github.com/ninja-build/ninja/releases/download/v$ENV{NINJA_VERSION}/ninja-win.zip" ./ninja.zip)
+        execute_process(COMMAND ${CMAKE_COMMAND} -E tar xvf ./ninja.zip)
+
+        message(STATUS "Get LLVM")
+        file(DOWNLOAD "https://github.com/llvm/llvm-project/releases/download/llvmorg-$ENV{LLVM_VERSION}/LLVM-$ENV{LLVM_VERSION}-win64.exe" ./llvm.exe)
+        execute_process(COMMAND cmd /c start "" /WAIT ./llvm.exe /S)
+
+        if("${{ matrix.api }}" STREQUAL "vk")
+          message(STATUS "Get VKSDK")
+          file(DOWNLOAD "https://sdk.lunarg.com/sdk/download/$ENV{VULKAN_VERSION}/windows/VulkanSDK-$ENV{VULKAN_VERSION}-Installer.exe" ./vksdk.exe)
+          execute_process(COMMAND cmd /c start "" /WAIT ./vksdk.exe /S)
+          file(APPEND "$ENV{GITHUB_ENV}" "VULKAN_SDK=C:\\VulkanSDK\\$ENV{VULKAN_VERSION}")
+          file(APPEND "$ENV{GITHUB_PATH}" "C:\\VulkanSDK\\$ENV{VULKAN_VERSION}\\bin")
+        endif()
+
+        file(APPEND "$ENV{GITHUB_PATH}" "$ENV{GITHUB_WORKSPACE};${cmake_dir};$ENV{GITHUB_WORKSPACE};C:\\Program Files\\LLVM\\bin")
+
+    - name: Get dependencies (Ubuntu)
+      if: ${{ matrix.target != 'self-hosted' && runner.os == 'Ubuntu' }}
+      run: |
+        wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
+        sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-$ENV{VULKAN_APT_VERSION}-focal.list https://packages.lunarg.com/vulkan/$ENV{VULKAN_APT_VERSION}/lunarg-vulkan-$ENV{VULKAN_APT_VERSION}-focal.list
+        sudo apt update
+        sudo apt install cmake ninja llvm vulkan-sdk
+
+    - name: Configure
+      shell: cmake -P {0}
+      run: |
+        execute_process(
+          COMMAND ${CMAKE_COMMAND} --preset ninja-${{ matrix.api }}
+          RESULT_VARIABLE result)
+
+        if (NOT result EQUAL 0)
+          message(FATAL_ERROR "Bad exit status")
+        endif()
+
+    - name: Build
+      shell: cmake -P {0}
+      run: |
+        set(ENV{NINJA_STATUS} "[%f/%t %o/sec] ")
+
+        execute_process(
+          COMMAND ${CMAKE_COMMAND} --build --preset ninja-${{ matrix.api }}-${{ matrix.config }}
+          RESULT_VARIABLE result
+          OUTPUT_VARIABLE output
+          ERROR_VARIABLE output
+          ECHO_OUTPUT_VARIABLE ECHO_ERROR_VARIABLE)
+        
+        if (NOT result EQUAL 0)
+          string(REGEX MATCH "FAILED:.*$" error_message "${output}")
+          string(REPLACE "\n" "%0A" error_message "${error_message}")
+          message("::error::${error_message}")
+          message(FATAL_ERROR "Build failed")
+        endif()
