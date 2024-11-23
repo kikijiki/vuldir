@@ -4,7 +4,7 @@
 
 using namespace vd;
 
-bool hasTearingSupport()
+static bool hasTearingSupport()
 {
   ComPtr<IDXGIFactory4> factory4;
   if(SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory4)))) {
@@ -20,6 +20,17 @@ bool hasTearingSupport()
   }
 
   return false;
+}
+
+static UInt2 getSize(HWND hWnd, Opt<UInt2> requestedSize)
+{
+  if(requestedSize) { return *requestedSize; }
+
+  RECT clientRect;
+  GetClientRect(hWnd, &clientRect);
+  return {
+    static_cast<uint32_t>(clientRect.right - clientRect.left),
+    static_cast<uint32_t>(clientRect.bottom - clientRect.top)};
 }
 
 Swapchain::Swapchain(Device& device, const Desc& desc):
@@ -51,8 +62,9 @@ void Swapchain::Resize(Opt<UInt2> size)
   m_acquireFences.clear();
   m_releaseFences.clear();
 
+  auto newSize = getSize(m_desc.window.hWnd, size);
   m_handle->ResizeBuffers(
-    m_imageCount, size[0], size[1], vd::convert(m_desc.format),
+    m_imageCount, newSize[0], newSize[1], vd::convert(m_desc.format),
     hasTearingSupport() ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0);
 
   DXGI_SWAP_CHAIN_DESC1 desc;
@@ -125,8 +137,9 @@ void Swapchain::create()
 
   DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
 
-  swapChainDesc.Width       = 0u; // TODO
-  swapChainDesc.Height      = 0u; // TODO
+  auto size                 = getSize(m_desc.window.hWnd, m_desc.size);
+  swapChainDesc.Width       = size[0];
+  swapChainDesc.Height      = size[1];
   swapChainDesc.Format      = convert(m_desc.format);
   swapChainDesc.Stereo      = FALSE;
   swapChainDesc.SampleDesc  = {1, 0};
@@ -136,11 +149,6 @@ void Swapchain::create()
   swapChainDesc.SwapEffect  = DXGI_SWAP_EFFECT_FLIP_DISCARD;
   swapChainDesc.AlphaMode   = DXGI_ALPHA_MODE_UNSPECIFIED;
   swapChainDesc.Flags       = m_swapchainFlags;
-
-  if(m_desc.size) {
-    swapChainDesc.Width  = (*m_desc.size)[0];
-    swapChainDesc.Height = (*m_desc.size)[1];
-  }
 
   ComPtr<IDXGISwapChain1> swapChain;
   VDDxTry(dxgiFactory4->CreateSwapChainForHwnd(
