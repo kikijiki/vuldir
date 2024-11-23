@@ -34,10 +34,14 @@ int main()
     Rect renderArea{.offset = {0, 0}, .extent = sc.GetExtent()};
 
     window.OnResize = [&]() {
+      // Don't recreate if dimensions haven't changed
       if(
         sc.GetExtent()[0] == window.GetContentWidth() &&
         sc.GetExtent()[1] == window.GetContentHeight())
         return;
+
+      // Wait for the device to be idle before recreating resources
+      dev.WaitIdle();
 
       // TODO: Stale descriptors?
       sc.Resize();
@@ -56,7 +60,7 @@ int main()
       ctx.Reset();
 
       // Spin
-      angle += .2f;
+      angle += .01f;
       res.objects[0]->data.world = vd::mt::RotationY(angle);
       res.objects[0]->Update();
 

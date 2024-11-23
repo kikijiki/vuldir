@@ -44,7 +44,7 @@ public:
   }
 
   Format GetFormat() const { return m_desc.format; }
-  void   Resize(UInt2 size = {});
+  void   Resize(Opt<UInt2> size = {});
 
   Fence& GetAcquireFence() { return *m_acquireFences[m_frameIndex]; }
   Fence& GetReleaseFence() { return *m_releaseFences[m_frameIndex]; }

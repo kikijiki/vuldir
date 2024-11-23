@@ -41,8 +41,10 @@ Swapchain::Swapchain(Device& device, const Desc& desc):
 
 Swapchain::~Swapchain() { destroy(); }
 
-void Swapchain::Resize(UInt2 size)
+void Swapchain::Resize(Opt<UInt2> size)
 {
+  m_desc.size = size;
+
   for(auto& fence: m_acquireFences) { fence->Wait(); }
 
   m_images.clear();
@@ -153,7 +155,7 @@ void Swapchain::create()
   VDDxTry(m_handle->GetDesc1(&swapChainDesc));
   m_imageCount = swapChainDesc.BufferCount;
 
-  Resize({0, 0});
+  Resize(m_desc.size);
   //m_handle->Release(); // GetBuffer adds 1 the first time?
 }
 

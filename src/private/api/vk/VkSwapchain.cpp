@@ -24,7 +24,7 @@ Swapchain::Swapchain(Device& device, const Desc& desc):
 
 Swapchain::~Swapchain() { destroy(); }
 
-void Swapchain::Resize(UInt2 size)
+void Swapchain::Resize(Opt<UInt2> size)
 {
   m_desc.size = size;
   create();
@@ -142,7 +142,7 @@ void Swapchain::create()
           capabilities.minImageExtent.width,
         "Present width too small.");
       VDAssertMsg(
-        capabilities.currentExtent.width >=
+        capabilities.currentExtent.width <=
           capabilities.maxImageExtent.width,
         "Present width too big.");
       VDAssertMsg(
@@ -150,7 +150,7 @@ void Swapchain::create()
           capabilities.minImageExtent.height,
         "Present height too small.");
       VDAssertMsg(
-        capabilities.currentExtent.height >=
+        capabilities.currentExtent.height <=
           capabilities.maxImageExtent.height,
         "Present height too big.");
     }
