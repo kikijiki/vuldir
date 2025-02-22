@@ -121,9 +121,7 @@ void vd::RenderContext::Submit(
   Span<Fence*> signals, SwapchainDep swapchainDep)
 {
   auto& submitFence = getInFlightFence();
-  m_device.Submit(
-    std::move(cmdbufs), std::move(waits), std::move(signals),
-    &submitFence, swapchainDep);
+  m_device.Submit(cmdbufs, waits, signals, &submitFence, swapchainDep);
 }
 
 void vd::RenderContext::WaitInFlightOperations()

@@ -18,7 +18,7 @@ Window::Window(const Str& title, const u32 width, const u32 height)
   wcex.hInstance     = m_handle.hInstance;
   wcex.hIcon         = LoadIcon(m_handle.hInstance, IDI_APPLICATION);
   wcex.hCursor       = LoadCursor(nullptr, IDC_ARROW);
-  wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+  wcex.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
   wcex.lpszMenuName  = nullptr;
   wcex.lpszClassName = "VuldirSampleClass";
   wcex.hIconSm       = LoadIcon(m_handle.hInstance, IDI_APPLICATION);
