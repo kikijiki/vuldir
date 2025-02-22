@@ -43,7 +43,7 @@ Device::~Device()
 }
 
 void Device::Submit(
-  Arr<CommandBuffer*> cmds, Arr<Fence*> waits, Arr<Fence*> signals,
+  Span<CommandBuffer*> cmds, Span<Fence*> waits, Span<Fence*> signals,
   Fence* submitFence, SwapchainDep swapchainDep)
 {
   if(cmds.size() == 0u) return;

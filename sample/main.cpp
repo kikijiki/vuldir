@@ -134,7 +134,8 @@ int main()
 
       // Submit commands to gpu and schedule the next present.
       cmd.End();
-      ctx.Submit({&cmd}, {}, {}, SwapchainDep::AcquireRelease);
+      CommandBuffer* cmds[] = {&cmd};
+      ctx.Submit(cmds, {}, {}, SwapchainDep::AcquireRelease);
       sc.Present();
       sc.NextFrame();
 

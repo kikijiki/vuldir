@@ -49,8 +49,8 @@ public:
   void EndTransfers();
 
   void Submit(
-    Arr<CommandBuffer*> cmdbufs, Arr<Fence*> waits = {},
-    Arr<Fence*>  signals      = {},
+    Span<CommandBuffer*> cmdbufs, Span<Fence*> waits = {},
+    Span<Fence*> signals      = {},
     SwapchainDep swapchainDep = SwapchainDep::None);
 
   void WaitInFlightOperations();

@@ -53,8 +53,8 @@ public:
   const Swapchain& GetSwapchain() const { return *m_swapchain; }
 
   void Submit(
-    Arr<CommandBuffer*> cmds, Arr<Fence*> waits = {},
-    Arr<Fence*> signals = {}, Fence* submitFence = nullptr,
+    Span<CommandBuffer*> cmds, Span<Fence*> waits = {},
+    Span<Fence*> signals = {}, Fence* submitFence = nullptr,
     SwapchainDep swapchainDep = SwapchainDep::None);
 
   bool Wait(QueueType queue, Fence& fence) const;

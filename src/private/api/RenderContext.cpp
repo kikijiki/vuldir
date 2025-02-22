@@ -96,8 +96,11 @@ void RenderContext::EndTransfers()
   auto& cmd = GetCmd(QueueType::Copy);
   cmd.End();
 
+  CommandBuffer* cmds[]    = {&cmd};
+  Fence*         signals[] = {&m_transfersFence};
+
   m_transfersFence.Step();
-  m_device.Submit({&cmd}, {}, {&m_transfersFence});
+  m_device.Submit(cmds, {}, signals);
   m_transfersFence.Wait();
 
   m_freeStagingBuffers.clear();
@@ -114,8 +117,8 @@ void RenderContext::EndTransfers()
 }
 
 void vd::RenderContext::Submit(
-  Arr<CommandBuffer*> cmdbufs, Arr<Fence*> waits, Arr<Fence*> signals,
-  SwapchainDep swapchainDep)
+  Span<CommandBuffer*> cmdbufs, Span<Fence*> waits,
+  Span<Fence*> signals, SwapchainDep swapchainDep)
 {
   auto& submitFence = getInFlightFence();
   m_device.Submit(
