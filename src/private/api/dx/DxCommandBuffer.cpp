@@ -54,8 +54,8 @@ void CommandBuffer::Reset(bool resetPool)
 
   if(m_state != State::Closed) return;
 
-  if(resetPool) m_pool.Reset();
   m_handle->Reset(m_pool.handle.Get(), nullptr);
+  if(resetPool) m_pool.Reset(); // Move after command list reset
   m_state = State::Ready;
 }
 
