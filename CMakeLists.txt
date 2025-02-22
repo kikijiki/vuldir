@@ -172,7 +172,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     -Wno-extra-semi-stmt -Wno-switch-enum
     -Wno-format-nonliteral -Wno-format-security
     -Wno-covered-switch-default -Wno-ctad-maybe-unsupported
-    -Wno-language-extension-token)
+    -Wno-language-extension-token
+    -Wno-missing-field-initializers)
 
   if(NOT MSVC)
     list(APPEND VD_COMPILE_OPTIONS
