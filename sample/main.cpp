@@ -52,11 +52,85 @@ int main()
     };
 
     // glTF loading.
-    window.OnFileDrop = [](const Arr<Str>& files) {
+    window.OnFileDrop = [&](const Arr<Str>& files) {
       for(const auto& file: files) {
         if(file.ends_with(".gltf")) {
           auto reader = DataReader(DataReader::Desc{});
           auto model  = reader.ReadModel(file, {});
+
+          // Wait for any pending operations
+          dev.WaitIdle();
+
+          // Clear existing objects
+          res.objects.clear();
+          res.bufPosNrm.clear();
+
+          // For each mesh in the model
+          for(const auto& mesh: model.meshes) {
+            for(const auto& prim: mesh.primitives) {
+              Arr<Float4> vertices;
+
+              // Find position attribute
+              for(const auto& attr: prim.attributes) {
+                if(attr.type == VertexAttribute::Position) {
+                  const auto& acc = model.accessors[attr.accessorIndex];
+                  const auto& view =
+                    model.bufferViews[acc.bufferViewIndex];
+                  const auto& buffer = model.buffers[view.bufferIndex];
+
+                  // Read vertex positions
+                  const float* positions =
+                    reinterpret_cast<const float*>(
+                      buffer.data.data() + view.offset + acc.offset);
+                  for(u32 i = 0; i < acc.count; i++) {
+                    vertices.push_back(
+                      {positions[i * 3], positions[i * 3 + 1],
+                       positions[i * 3 + 2], 0.0f});
+                  }
+                  break;
+                }
+              }
+
+              if(vertices.empty()) continue;
+
+              // Create vertex buffer
+              auto vbuf = std::make_unique<Buffer>(
+                dev, Buffer::Desc{
+                       .name        = "Mesh vertices",
+                       .usage       = ResourceUsage::ShaderResource,
+                       .size        = vertices.size() * sizeof(Float4),
+                       .defaultView = ViewType::SRV,
+                       .memoryType  = MemoryType::Upload});
+
+              // Write vertex data
+              vbuf->Write(vertices);
+              res.bufPosNrm.push_back(std::move(vbuf));
+
+              // Create object
+              auto object =
+                std::make_unique<UniformBuffer<ObjectParam, u32>>(
+                  dev, Buffer::Desc{
+                         .name        = "Model object",
+                         .usage       = ResourceUsage::ShaderResource,
+                         .size        = sizeof(ObjectParam),
+                         .defaultView = ViewType::SRV,
+                         .memoryType  = MemoryType::Upload});
+
+              object->data = {
+                .world = vd::mt::Identity<Float44>(),
+                .vbPosNrmIdx =
+                  static_cast<i32>(res.bufPosNrm.back()
+                                     ->GetView(ViewType::SRV)
+                                     ->binding.index),
+                .vbTanIdx    = -1,
+                .vbUV0Idx    = -1,
+                .materialIdx = 0};
+
+              object->meta = vertices.size();
+              object->Update();
+              res.objects.push_back(std::move(object));
+            }
+          }
           break;
         }
       }

@@ -342,7 +342,7 @@ inline Span<u8 const> getBytes(const T& data)
     byteSize = sizeof(T);
     ptr      = reinterpret_cast<const u8*>(&data);
   } else { // Array, Vector
-    byteSize = std::size(data) * sizeof(T::value_type);
+    byteSize = std::size(data) * sizeof(typename T::value_type);
     ptr      = reinterpret_cast<const u8*>(std::data(data));
   }
 
