@@ -256,7 +256,7 @@ DescriptorBinding Binder::Bind(const Sampler::View& view)
   binding.index =
     getHeap(DescriptorType::Sampler).allocate(view.handle.cpu);
 
-  VDLogI("Bind sampler #%u", binding.index);
+  VDLogV("Bind sampler #%u", binding.index);
   return binding;
 }
 
@@ -267,7 +267,7 @@ DescriptorBinding Binder::Bind(const Buffer::View& view)
   binding.index =
     getHeap(DescriptorType::StorageBuffer).allocate(view.handle.cpu);
 
-  VDLogI(
+  VDLogV(
     "Bind buffer #%u to %s", binding.index, view.GetResourceName());
   return binding;
 }
@@ -281,7 +281,7 @@ DescriptorBinding Binder::Bind(const Image::View& view)
       binding.type = DescriptorType::SampledImage;
       binding.index =
         getHeap(DescriptorType::SampledImage).allocate(view.handle.cpu);
-      VDLogI(
+      VDLogV(
         "Bind image (SRV)  #%u to %s", binding.index,
         view.GetResourceName());
       break;
@@ -289,7 +289,7 @@ DescriptorBinding Binder::Bind(const Image::View& view)
       binding.type = DescriptorType::StorageImage;
       binding.index =
         getHeap(DescriptorType::StorageImage).allocate(view.handle.cpu);
-      VDLogI(
+      VDLogV(
         "Bind image (UAV) #%u to %s", binding.index,
         view.GetResourceName());
       break;

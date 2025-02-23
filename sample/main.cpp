@@ -12,6 +12,10 @@ int main()
 {
   try {
     Window window{"Vuldir Sample", 400u, 400u};
+    window.OnFileDrop = [](const Arr<Str>& files) {
+      for(const auto& file: files)
+        VDLogI("Dropped file: %s", file.c_str());
+    };
 
     Device dev{
       {.dbgEnable = true,

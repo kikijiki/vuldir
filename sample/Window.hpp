@@ -23,7 +23,8 @@ public:
   bool IsVisible() const;
 
 public:
-  std::function<void()> OnResize;
+  std::function<void()>                OnResize;
+  std::function<void(const Arr<Str>&)> OnFileDrop;
 
 private:
 #ifdef VD_OS_WINDOWS

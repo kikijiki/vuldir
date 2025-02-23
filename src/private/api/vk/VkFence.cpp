@@ -56,12 +56,12 @@ Fence::Fence(
       break;
   }
 
-  VDLogI("Creating fence %s", m_name.c_str());
+  VDLogV("Creating fence %s", m_name.c_str());
 }
 
 Fence::~Fence()
 {
-  if(!m_name.empty()) { VDLogI("Destroying fence %s", m_name.c_str()); }
+  if(!m_name.empty()) { VDLogV("Destroying fence %s", m_name.c_str()); }
 
   if(m_type == Type::Fence) {
     m_device.api().DestroyFence(m_fenceHandle);
@@ -78,7 +78,7 @@ void Fence::Reset()
   VDAssertMsg(
     m_type == Type::Fence, "Invalid for non-fence semaphores");
 
-  if(!m_name.empty()) { VDLogI("Resetting fence %s", m_name.c_str()); }
+  if(!m_name.empty()) { VDLogV("Resetting fence %s", m_name.c_str()); }
 
   m_device.api().ResetFences(1u, &m_fenceHandle);
 }
@@ -103,13 +103,13 @@ bool Fence::WaitValue(u64 value, u64 timeoutNs) const
     info.pValues        = &value;
 
     if(!m_name.empty()) {
-      VDLogI("Waiting fence %s for value %llu", m_name.c_str(), value);
+      VDLogV("Waiting fence %s for value %llu", m_name.c_str(), value);
     }
 
     const auto result = m_device.api().WaitSemaphores(&info, timeoutNs);
     return result == VK_SUCCESS;
   } else {
-    if(!m_name.empty()) { VDLogI("Waiting fence %s", m_name.c_str()); }
+    if(!m_name.empty()) { VDLogV("Waiting fence %s", m_name.c_str()); }
 
     const auto result =
       m_device.api().WaitForFences(1u, &m_fenceHandle, true, timeoutNs);
@@ -125,7 +125,7 @@ bool Fence::Signal(u64 value)
     throw std::runtime_error("Invalid for non-timeline fences");
 
   if(!m_name.empty()) {
-    VDLogI("Signaling fence %s for value %llu", m_name.c_str(), value);
+    VDLogV("Signaling fence %s for value %llu", m_name.c_str(), value);
   }
 
   VkSemaphoreSignalInfo info;
@@ -186,10 +186,10 @@ bool Fence::wait(
   }
 
   VkSemaphore handles[maxFences];
-  VDLogI("Waiting for %llu fences", fences.size());
+  VDLogV("Waiting for %llu fences", fences.size());
   for(u32 idx = 0u; idx < vd::size32(fences); ++idx) {
     if(!fences[idx].m_name.empty()) {
-      VDLogI(
+      VDLogV(
         "- %s for value %llu", fences[idx].m_name.c_str(), values[idx]);
     }
     handles[idx] = fences[idx].GetSemaphoreHandle();

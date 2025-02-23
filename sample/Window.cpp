@@ -1,5 +1,7 @@
 #include "Window.hpp"
 
+#include <shellapi.h>
+
 ///////////////////////////////////////////////////////////////////////
 #ifdef VD_OS_WINDOWS
 ///////////////////////////////////////////////////////////////////////
@@ -37,6 +39,9 @@ Window::Window(const Str& title, const u32 width, const u32 height)
   }
 
   SetPropA(m_handle.hWnd, "VuldirWindow", this);
+
+  // Enable drag and drop
+  DragAcceptFiles(m_handle.hWnd, TRUE);
 
   ShowWindow(m_handle.hWnd, SW_SHOW);
   UpdateWindow(m_handle.hWnd);
@@ -106,6 +111,25 @@ Window::_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_EXITSIZEMOVE:
       if(wnd && wnd->OnResize) wnd->OnResize();
       break;
+    case WM_DROPFILES: {
+      if(wnd && wnd->OnFileDrop) {
+        HDROP hDrop     = reinterpret_cast<HDROP>(wParam);
+        UINT  fileCount = DragQueryFileA(hDrop, 0xFFFFFFFF, nullptr, 0);
+        Arr<Str> files;
+        files.reserve(fileCount);
+
+        char filepath[MAX_PATH];
+        for(UINT i = 0; i < fileCount; i++) {
+          if(DragQueryFileA(hDrop, i, filepath, MAX_PATH) != 0) {
+            files.emplace_back(filepath);
+          }
+        }
+
+        DragFinish(hDrop);
+        wnd->OnFileDrop(files);
+      }
+      break;
+    }
     default:
       return DefWindowProc(hWnd, message, wParam, lParam);
   }
@@ -145,6 +169,18 @@ Window::Window(const Str& title, const u32 width, const u32 height)
     XCB_ATOM_WM_ICON_NAME, XCB_ATOM_STRING, 8, title.size(),
     title.c_str());
 
+  // Set up XDnD (X11 Drag and Drop)
+  xcb_atom_t atoms[] = {XCB_ATOM_XdndAware,    XCB_ATOM_XdndEnter,
+                        XCB_ATOM_XdndPosition, XCB_ATOM_XdndStatus,
+                        XCB_ATOM_XdndDrop,     XCB_ATOM_XdndLeave,
+                        XCB_ATOM_XdndFinished};
+
+  // Register window as XDnD aware (version 5)
+  const uint32_t version = 5;
+  xcb_change_property(
+    m_handle.connection, XCB_PROP_MODE_REPLACE, m_handle.window,
+    XCB_ATOM_XdndAware, XCB_ATOM_ATOM, 32, 1, &version);
+
   xcb_map_window(m_handle.connection, m_handle.window);
   xcb_flush(m_handle.connection);
 }
@@ -156,11 +192,95 @@ void Window::Run(const std::function<bool()>& main)
   for(;;) {
     xcb_generic_event_t* event;
     while((event = xcb_poll_for_event(m_handle.connection))) {
-      switch(event->response_type) {
+      switch(event->response_type & ~0x80) {
+        case XCB_CLIENT_MESSAGE: {
+          xcb_client_message_event_t* cm =
+            (xcb_client_message_event_t*)event;
+          if(cm->type == XCB_ATOM_XdndDrop && OnFileDrop) {
+            xcb_atom_t selection = XCB_ATOM_PRIMARY;
+            xcb_atom_t targets =
+              4; // Typically text/uri-list for drag and drop
+
+            // Send selection request
+            xcb_convert_selection(
+              m_handle.connection, m_handle.window,
+              XCB_ATOM_XdndSelection, targets, selection,
+              XCB_CURRENT_TIME);
+
+            xcb_flush(m_handle.connection);
+
+            // Wait for selection notify event
+            xcb_generic_event_t* selection_event;
+            while(
+              (selection_event =
+                 xcb_wait_for_event(m_handle.connection))) {
+              if(
+                (selection_event->response_type & ~0x80) ==
+                XCB_SELECTION_NOTIFY) {
+                xcb_selection_notify_event_t* notify =
+                  (xcb_selection_notify_event_t*)selection_event;
+
+                // Get the selection data
+                xcb_get_property_cookie_t cookie = xcb_get_property(
+                  m_handle.connection, 0, m_handle.window, selection,
+                  targets, 0,
+                  4096 // Maximum size to read
+                );
+
+                xcb_get_property_reply_t* reply =
+                  xcb_get_property_reply(
+                    m_handle.connection, cookie, nullptr);
+
+                if(reply) {
+                  Arr<Str> files;
+                  char*    data = (char*)xcb_get_property_value(reply);
+                  int length    = xcb_get_property_value_length(reply);
+
+                  // Parse URI list (format: file:///path\r\n)
+                  Str    uri_list(data, length);
+                  size_t pos = 0;
+                  while((pos = uri_list.find("\r\n")) != Str::npos) {
+                    Str uri = uri_list.substr(0, pos);
+                    if(uri.starts_with("file://")) {
+                      // Convert URI to local path
+                      Str path = uri.substr(7);
+                      files.push_back(path);
+                    }
+                    uri_list = uri_list.substr(pos + 2);
+                  }
+
+                  // Send finished message
+                  xcb_client_message_event_t finished;
+                  memset(&finished, 0, sizeof(finished));
+                  finished.response_type = XCB_CLIENT_MESSAGE;
+                  finished.window = cm->data.data32[0]; // Source window
+                  finished.type   = XCB_ATOM_XdndFinished;
+                  finished.format = 32;
+                  finished.data.data32[0] = m_handle.window;
+                  finished.data.data32[1] = 1; // Success
+
+                  xcb_send_event(
+                    m_handle.connection, 0, cm->data.data32[0],
+                    XCB_EVENT_MASK_NO_EVENT, (char*)&finished);
+
+                  xcb_flush(m_handle.connection);
+
+                  // Call the callback with collected files
+                  if(!files.empty()) { OnFileDrop(files); }
+
+                  free(reply);
+                }
+
+                free(selection_event);
+                break;
+              }
+              free(selection_event);
+            }
+          }
+          break;
+        }
         case XCB_EXPOSE:
           xcb_flush(m_handle.connection);
-          break;
-        case XCB_CLIENT_MESSAGE:
           break;
         default:
           break;

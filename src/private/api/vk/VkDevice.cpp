@@ -109,7 +109,7 @@ void Device::Submit(
   Arr<VkSemaphore>          vkSignalHandles;
   Arr<u64>                  vkSignalValues;
 
-  VDLogI(
+  VDLogV(
     "Submitting %u command buffers on queue %s", cmds.size(),
     queue.name.c_str());
 
@@ -123,7 +123,7 @@ void Device::Submit(
     vkWaitHandles.push_back(wait->GetSemaphoreHandle());
     vkWaitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT); // TODO
     vkWaitValues.push_back(wait->GetTarget());
-    VDLogI("- Wait: %s", wait->GetName().c_str());
+    VDLogV("- Wait: %s", wait->GetName().c_str());
   }
 
   if(
@@ -132,7 +132,7 @@ void Device::Submit(
     vkWaitHandles.push_back(
       m_swapchain->GetAcquireFence().GetSemaphoreHandle());
     vkWaitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT); // TODO
-    VDLogI(
+    VDLogV(
       "- Wait SC: %s",
       m_swapchain->GetAcquireFence().GetName().c_str());
   }
@@ -140,7 +140,7 @@ void Device::Submit(
   for(auto& signal: signals) {
     vkSignalHandles.push_back(signal->GetSemaphoreHandle());
     vkSignalValues.push_back(signal->GetTarget());
-    VDLogI("- Signal: %s", signal->GetName().c_str());
+    VDLogV("- Signal: %s", signal->GetName().c_str());
   }
 
   if(
@@ -148,7 +148,7 @@ void Device::Submit(
     swapchainDep == SwapchainDep::AcquireRelease) {
     vkSignalHandles.push_back(
       m_swapchain->GetReleaseFence().GetSemaphoreHandle());
-    VDLogI(
+    VDLogV(
       "- Signal SC: %s",
       m_swapchain->GetReleaseFence().GetName().c_str());
   }

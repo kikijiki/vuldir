@@ -292,7 +292,7 @@ DescriptorBinding Binder::Bind(const Sampler::View& view)
   write.descriptorCount = 1;
   write.pImageInfo      = &info;
 
-  VDLogI(
+  VDLogV(
     "Bind sampler #%u %s[%u]", heap.binding, heap.name, binding.index);
   m_device.api().UpdateDescriptorSets(1u, &write, 0u, nullptr);
 
@@ -321,7 +321,7 @@ DescriptorBinding Binder::Bind(const Buffer::View& view)
   write.descriptorCount = 1;
   write.pBufferInfo     = &info;
 
-  VDLogI(
+  VDLogV(
     "Bind buffer #%u %s[%u] to: %s", heap.binding, heap.name,
     binding.index, view.GetResourceName());
   m_device.api().UpdateDescriptorSets(1u, &write, 0u, nullptr);
@@ -380,7 +380,7 @@ DescriptorBinding Binder::Bind(const Image::View& view)
   write.descriptorCount = 1;
   write.pImageInfo      = &info;
 
-  VDLogI(
+  VDLogV(
     "Bind image #%u %s[%u] to: %s", heap->binding, heap->name,
     binding.index, view.GetResourceName());
   m_device.api().UpdateDescriptorSets(1u, &write, 0u, nullptr);

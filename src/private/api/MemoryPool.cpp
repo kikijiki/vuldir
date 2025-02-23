@@ -57,7 +57,7 @@ MemoryPool::Allocation MemoryPool::Allocate(u64 size, u64 alignment)
   }
 
   if(m_debugVerbose) {
-    VDLogI(
+    VDLogV(
       "[MemoryPool %s] Alloc:%llu - used:%llu free:%llu max:%llu ",
       m_name.c_str(), size, m_usedSize, m_freeSize, m_maxAllocSize);
     logDetailedUsage();
@@ -83,7 +83,7 @@ void MemoryPool::Free(const Allocation& allocation)
   pushFreeBlock({allocation.blockOffset, allocation.blockSize});
 
   if(m_debugVerbose) {
-    VDLogI(
+    VDLogV(
       "[MemoryPool %s] Free:%llu - used:%llu free:%llu max:%llu ",
       m_name.c_str(), allocation.size, m_usedSize, m_freeSize,
       m_maxAllocSize);
@@ -158,8 +158,8 @@ void MemoryPool::sortFreeBlocks()
 
 void MemoryPool::logDetailedUsage()
 {
-  VDLogI("[MemoryPool %s] Free blocks (offset size)", m_name.c_str());
+  VDLogV("[MemoryPool %s] Free blocks (offset size)", m_name.c_str());
   for([[maybe_unused]] auto& block: m_freeBlocks) {
-    VDLogI("- %.8llu %.8llu", block.offset, block.size);
+    VDLogV("- %.8llu %.8llu", block.offset, block.size);
   }
 }
