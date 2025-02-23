@@ -1,5 +1,6 @@
 #pragma once
 
+#include "vuldir/Data.hpp"
 #include "vuldir/api/Api.hpp"
 #include "vuldir/core/Core.hpp"
 
@@ -7,14 +8,6 @@ namespace vd {
 
 class DataReader
 {
-public:
-  struct ImageData {
-    Opt<Str> uri;
-    Format   format;
-    UInt2    size;
-    Arr<u8>  texels;
-  };
-
 public:
   using UriFilter  = std::function<bool(Strv)>;
   using FileReader = std::function<Arr<u8>(
@@ -52,27 +45,29 @@ public:
   DataReader(const Desc& desc = {});
 
 public:
-  ImageData ReadImage(std::istream& src, const ImageOptions& options);
-  ImageData ReadImage(Span<u8 const> src, const ImageOptions& options);
-  ImageData
+  data::Image ReadImage(std::istream& src, const ImageOptions& options);
+  data::Image
+  ReadImage(Span<u8 const> src, const ImageOptions& options);
+  data::Image
   ReadImage(const fs::path& path, const ImageOptions& options);
 
-  // data::Model ReadModel(std::istream& src, ModelOptions options);
-  // data::Model ReadModel(Span<u8 const> src, ModelOptions options);
-  // data::Model ReadModel(const fs::path& path, ModelOptions options);
+  data::Model ReadModel(std::istream& src, const ModelOptions& options);
+  data::Model
+  ReadModel(Span<u8 const> src, const ModelOptions& options);
+  data::Model
+  ReadModel(const fs::path& path, const ModelOptions& options);
 
 private:
-  bool      isPng(std::istream& str);
-  ImageData readPng(std::istream& str, const ImageOptions& options);
+  bool        isPng(std::istream& str);
+  data::Image readPng(std::istream& str, const ImageOptions& options);
 
-  // bool isGLTF(std::istream& src);
-  // bool isBinaryGLTF(std::istream& src);
+  bool isGLTF(std::istream& src);
+  bool isBinaryGLTF(std::istream& src);
 
-  // data::Model
-  // readGLTF(std::istream& src, const ModelOptions& options = {});
-  // data::Model
-  // readBinaryGLTF(std::istream& src, const ModelOptions& options =
-  // {});
+  data::Model
+  readGLTF(std::istream& src, const ModelOptions& options = {});
+  data::Model
+  readBinaryGLTF(std::istream& src, const ModelOptions& options = {});
 
 private:
   UriFilter  m_uriFilter;

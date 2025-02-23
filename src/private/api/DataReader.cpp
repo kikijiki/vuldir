@@ -13,7 +13,7 @@ DataReader::DataReader(const Desc& desc)
     };
 }
 
-DataReader::ImageData
+data::Image
 DataReader::ReadImage(std::istream& src, const ImageOptions& options)
 {
   if(isPng(src)) return readPng(src, options);
@@ -21,7 +21,7 @@ DataReader::ReadImage(std::istream& src, const ImageOptions& options)
   throw std::runtime_error("DataReader: Unsupported image format");
 }
 
-DataReader::ImageData
+data::Image
 DataReader::ReadImage(const fs::path& path, const ImageOptions& options)
 {
   auto fsOpt = options;
@@ -35,40 +35,39 @@ DataReader::ReadImage(const fs::path& path, const ImageOptions& options)
   return ReadImage(src, fsOpt);
 }
 
-DataReader::ImageData
+data::Image
 DataReader::ReadImage(Span<u8 const> src, const ImageOptions& options)
 {
   IMemoryStream stream(src);
   return ReadImage(stream, options);
 }
 
-// data::Model
-// DataReader::ReadModel(std::istream& src, const ModelOptions& options)
-//{
-//  if(isBinaryGLTF(src)) return readBinaryGLTF(src, options);
-//  else if(isGLTF(src))
-//    return readGLTF(src, options);
-//
-//  throw std::runtime_error("DataReader: Unsupported asset format");
-//}
-//
-// data::Model
-// DataReader::ReadModel(const fs::path& path, const ModelOptions&
-// options)
-//{
-//  if(options.uri) options.uri = pathToStr(path);
-//
-//  if(!options.basePath) options.basePath = path.parent_path();
-//
-//  std::ifstream src(path, std::ios::binary);
-//  if(!options.basePath) options.basePath = path.parent_path();
-//  return ReadModel(src, options);
-//}
-//
-// data::Model
-// DataReader::ReadModel(Span<u8 const> src, const ModelOptions&
-// options)
-//{
-//  IMemoryStream stream(src);
-//  return ReadModel(stream, options);
-//}
+data::Model
+DataReader::ReadModel(std::istream& src, const ModelOptions& options)
+{
+  if(isBinaryGLTF(src)) return readBinaryGLTF(src, options);
+  else if(isGLTF(src))
+    return readGLTF(src, options);
+
+  throw std::runtime_error("DataReader: Unsupported asset format");
+}
+
+data::Model
+DataReader::ReadModel(const fs::path& path, const ModelOptions& options)
+{
+  auto fsOpt = options;
+  if(fsOpt.uri) fsOpt.uri = pathToStr(path);
+
+  if(!fsOpt.basePath) fsOpt.basePath = path.parent_path();
+
+  std::ifstream src(path, std::ios::binary);
+  if(!fsOpt.basePath) fsOpt.basePath = path.parent_path();
+  return ReadModel(src, fsOpt);
+}
+
+data::Model
+DataReader::ReadModel(Span<u8 const> src, const ModelOptions& options)
+{
+  IMemoryStream stream(src);
+  return ReadModel(stream, options);
+}

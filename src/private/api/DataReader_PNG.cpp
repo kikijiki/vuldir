@@ -369,7 +369,7 @@ bool DataReader::isPng(std::istream& src)
          0u;
 }
 
-DataReader::ImageData
+data::Image
 DataReader::readPng(std::istream& src, const ImageOptions& options)
 {
   if(!isPng(src)) throw std::runtime_error("PNG: bad signature");
@@ -377,7 +377,7 @@ DataReader::readPng(std::istream& src, const ImageOptions& options)
 
   auto bytes = streamReadBytes(src);
 
-  ImageData out;
+  data::Image out;
   out.uri = options.uri;
 
   ByteIStream stream({bytes.data(), bytes.size()});
