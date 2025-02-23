@@ -101,14 +101,14 @@ if(VD_API STREQUAL "vk")
     FetchContent_Declare(
       VulkanHeaders
       GIT_REPOSITORY "https://github.com/KhronosGroup/Vulkan-Headers.git"
-      GIT_TAG        "v1.2.190"
+      GIT_TAG        "v1.4.309"
       DOWNLOAD_EXTRACT_TIMESTAMP OFF)
     FetchContent_MakeAvailable(VulkanHeaders FETCHCONTENT_UPDATES_DISCONNECTED)
     
     FetchContent_Declare(
       VulkanValidationLayers
       GIT_REPOSITORY "https://github.com/KhronosGroup/Vulkan-ValidationLayers"
-      GIT_TAG        "v1.2.190"
+      GIT_TAG        "v1.4.309"
       DOWNLOAD_EXTRACT_TIMESTAMP OFF)
     
     FetchContent_Populate(VulkanValidationLayers FETCHCONTENT_UPDATES_DISCONNECTED)

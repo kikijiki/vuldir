@@ -18,7 +18,7 @@ int main()
        //.dbgUseSoftwareRenderer = true,
        //.dbgUseDRED      = true,
        //.dbgUseRenderdoc = true,
-       .dbgLogLevel = LogLevel::Verbose},
+       .dbgLogLevel = LogLevel::Info},
       Swapchain::Desc{.window = window.GetHandle()}};
 
     auto& sc = dev.GetSwapchain();

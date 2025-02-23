@@ -39,7 +39,10 @@ public:
   template<typename T>
   T GetFunction(const char* name)
   {
-    return m_module ? (T)::GetProcAddress(m_module, name) : nullptr;
+    if(!m_module) return nullptr;
+    void* procAddr =
+      reinterpret_cast<void*>(GetProcAddress(m_module, name));
+    return reinterpret_cast<T>(procAddr);
   }
 
 private:

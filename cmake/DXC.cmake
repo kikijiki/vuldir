@@ -24,8 +24,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     unset(VD_DXC)
     FetchContent_Declare(
       DXC
-      URL https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2403.2/dxc_2024_03_29.zip
-      #URL https://ci.appveyor.com/api/projects/dnovillo/directxshadercompiler/artifacts/build%2FRelease%2Fdxc-artifacts.zip?branch=main&pr=false&job=image%3A%20Visual%20Studio%202022
+      URL https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2502/dxc_2025_02_20.zip
       SOURCE_DIR "${CMAKE_SOURCE_DIR}/_cache/dxc/${CMAKE_SYSTEM_NAME}/"
       DOWNLOAD_EXTRACT_TIMESTAMP OFF)
     FetchContent_MakeAvailable(DXC)
@@ -40,8 +39,7 @@ else()
   if(NOT EXISTS ${VD_DXC})
     FetchContent_Declare(
       DXC
-      #URL https://ci.appveyor.com/api/projects/dnovillo/directxshadercompiler/artifacts/build%2Fdxc-artifacts.tar.gz?branch=main&pr=false&job=image%3A%20Ubuntu
-      URL https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2403.2/linux_dxc_2024_03_29.x86_64.tar.gz
+      URL https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2502/linux_dxc_2025_02_20.x86_64.tar.gz
       SOURCE_DIR "${CMAKE_SOURCE_DIR}/_cache/dxc/${CMAKE_SYSTEM_NAME}/"
       DOWNLOAD_EXTRACT_TIMESTAMP OFF)
     FetchContent_MakeAvailable(DXC)
