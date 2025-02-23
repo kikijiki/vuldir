@@ -50,8 +50,8 @@ jobs:
 
           file(APPEND "$ENV{GITHUB_PATH}" "$ENV{GITHUB_WORKSPACE};${cmake_dir};$ENV{GITHUB_WORKSPACE};C:\\Program Files\\LLVM\\bin")
 
-      - name: Get dependencies (Ubuntu)
-        if: ${{ matrix.target != 'self-hosted' && runner.os == 'Ubuntu' }}
+      - name: Get dependencies (Linux)
+        if: ${{ matrix.target != 'self-hosted' && runner.os == 'Linux' }}
         run: |
           wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
           sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-$ENV{VULKAN_APT_VERSION}-focal.list https://packages.lunarg.com/vulkan/$ENV{VULKAN_APT_VERSION}/lunarg-vulkan-$ENV{VULKAN_APT_VERSION}-focal.list
