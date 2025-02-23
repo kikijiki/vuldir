@@ -57,7 +57,7 @@ jobs:
           UBUNTU_CODENAME=$(lsb_release -cs)
           sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-${UBUNTU_CODENAME}.list http://packages.lunarg.com/vulkan/lunarg-vulkan-${UBUNTU_CODENAME}.list
           sudo apt update
-          sudo apt install cmake ninja llvm vulkan-sdk
+          sudo apt install cmake ninja-build llvm vulkan-sdk
 
       - name: Configure
         shell: cmake -P {0}
