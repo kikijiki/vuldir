@@ -56,7 +56,7 @@ data::Model
 DataReader::ReadModel(const fs::path& path, const ModelOptions& options)
 {
   auto fsOpt = options;
-  if(fsOpt.uri) fsOpt.uri = pathToStr(path);
+  if(!fsOpt.uri) fsOpt.uri = pathToStr(path);
 
   if(!fsOpt.basePath) fsOpt.basePath = path.parent_path();
 

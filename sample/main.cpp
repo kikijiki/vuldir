@@ -12,10 +12,6 @@ int main()
 {
   try {
     Window window{"Vuldir Sample", 400u, 400u};
-    window.OnFileDrop = [](const Arr<Str>& files) {
-      for(const auto& file: files)
-        VDLogI("Dropped file: %s", file.c_str());
-    };
 
     Device dev{
       {.dbgEnable = true,
@@ -38,13 +34,13 @@ int main()
     Rect renderArea{.offset = {0, 0}, .extent = sc.GetExtent()};
 
     window.OnResize = [&]() {
-      // Don't recreate if dimensions haven't changed
+      // Don't recreate if dimensions haven't changed.
       if(
         sc.GetExtent()[0] == window.GetContentWidth() &&
         sc.GetExtent()[1] == window.GetContentHeight())
         return;
 
-      // Wait for the device to be idle before recreating resources
+      // Wait for the device to be idle before recreating resources.
       dev.WaitIdle();
 
       // TODO: Stale descriptors?
@@ -53,6 +49,17 @@ int main()
 
       viewport.extent   = sc.GetExtentF();
       renderArea.extent = sc.GetExtent();
+    };
+
+    // glTF loading.
+    window.OnFileDrop = [](const Arr<Str>& files) {
+      for(const auto& file: files) {
+        if(file.ends_with(".gltf")) {
+          auto reader = DataReader(DataReader::Desc{});
+          auto model  = reader.ReadModel(file, {});
+          break;
+        }
+      }
     };
 
     f32 angle = .0f;

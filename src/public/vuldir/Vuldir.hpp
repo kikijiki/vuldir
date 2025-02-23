@@ -6,4 +6,5 @@
 #include "vuldir/api/Api.hpp"
 
 // Vuldir high-level types
+#include "vuldir/Data.hpp"
 #include "vuldir/DataReader.hpp"
