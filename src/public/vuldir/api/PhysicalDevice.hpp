@@ -23,6 +23,7 @@ public:
     VkPhysicalDeviceProperties2        properties   = {};
     VkPhysicalDeviceVulkan11Properties properties11 = {};
     VkPhysicalDeviceVulkan12Properties properties12 = {};
+    VkPhysicalDeviceVulkan13Properties properties13 = {};
 
     Properties()
     {
@@ -31,9 +32,12 @@ public:
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES;
       properties12.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES;
+      properties13.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES;
 
       properties.pNext   = &properties11;
       properties11.pNext = &properties12;
+      properties12.pNext = &properties13;
     }
 
     const VkPhysicalDeviceProperties* operator->() const
@@ -66,6 +70,7 @@ public:
     VkPhysicalDeviceDescriptorIndexingFeatures  descriptorIndexing = {};
     VkPhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddress =
       {};
+    VkPhysicalDeviceSynchronization2Features synchronization2 = {};
 
     Features()
     {
@@ -78,11 +83,14 @@ public:
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
       bufferDeviceAddress.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+      synchronization2.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
 
-      features.pNext           = &timeline;
-      timeline.pNext           = &dynamicRendering;
-      dynamicRendering.pNext   = &descriptorIndexing;
-      descriptorIndexing.pNext = &bufferDeviceAddress;
+      features.pNext            = &timeline;
+      timeline.pNext            = &dynamicRendering;
+      dynamicRendering.pNext    = &descriptorIndexing;
+      descriptorIndexing.pNext  = &bufferDeviceAddress;
+      bufferDeviceAddress.pNext = &synchronization2;
     }
 
     const VkPhysicalDeviceFeatures* operator->() const

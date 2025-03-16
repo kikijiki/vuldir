@@ -12,7 +12,6 @@ RenderContext::RenderContext(Device& device, const Desc& desc):
   m_desc{desc},
   m_cmdPools{},
   m_cmdBufs{},
-  m_transfersActive{false},
   m_transfersFence{device, "Transfer", Fence::Type::Timeline, 0u},
   m_inFlightFences{},
   m_inFlightFenceCount{0u},
@@ -46,82 +45,173 @@ void RenderContext::Reset()
   for(auto& cmd: m_cmdBufs) cmd->Reset(true);
 }
 
-bool RenderContext::WithData(
-  Span<u8 const> data, const std::function<bool(Buffer&)>& fun)
+bool RenderContext::Write(Buffer& buffer, Span<u8 const> data)
 {
+  const auto size = std::size(data);
+
+  VDLogI(
+    "Writing %zu bytes to buffer %s", size,
+    buffer.GetDesc().name.c_str());
+
+  if(buffer.GetMemoryType() != MemoryType::Main)
+    return buffer.Write(data);
+
   auto& stagingBuffer = getStagingBuffer(std::size(data));
   if(!stagingBuffer.Write(data)) {
     m_freeStagingBuffers.push_back(&stagingBuffer);
     return false;
   }
 
-  return fun(stagingBuffer);
-}
+#ifdef VD_API_VK
+  uint32_t transferQueueFamily =
+    m_device.GetQueueFamily(QueueType::Copy);
+  uint32_t graphicsQueueFamily =
+    m_device.GetQueueFamily(QueueType::Graphics);
+#endif
 
-bool RenderContext::Write(Buffer& buffer, Span<u8 const> data)
-{
-  if(buffer.GetMemoryType() != MemoryType::Main)
-    return buffer.Write(data);
+  // According to the spec, if we don't care about keeping the buffer contents
+  // there is no need to transfer the buffer ownership to the copy queue family.
 
-  return WithData(data, [this, &buffer](Buffer& src) {
-    GetCmd(QueueType::Copy).Copy(src, buffer);
-    return true;
-  });
+  auto& transferCmd = GetCmd(QueueType::Copy);
+
+  transferCmd.Begin();
+  transferCmd.AddBarrier(stagingBuffer, ResourceState::CopySrc);
+  transferCmd.AddBarrier(buffer, ResourceState::CopyDst);
+  transferCmd.FlushBarriers();
+  transferCmd.Copy(stagingBuffer, buffer, 0, 0, size);
+
+#ifdef VD_API_VK
+  // If the transfer queue family is different from the graphics queue family
+  // we need to transfer the ownership of the buffer from the transfer queue
+  // to the graphics queue with a barrier.
+  if(transferQueueFamily != graphicsQueueFamily) {
+    transferCmd.AddBarrier(
+      buffer, ResourceState::None, transferQueueFamily,
+      graphicsQueueFamily);
+    transferCmd.FlushBarriers();
+  }
+#endif
+
+  transferCmd.End();
+
+  m_device.Submit({&transferCmd}, {}, {&m_transfersFence});
+
+#ifdef VD_API_VK
+  // If the transfer queue family is different from the graphics queue
+  // family we need to wait for the transfer queue to finish before
+  // we can use the buffer in the graphics queue.
+  // And we also need a barrier to transfer the ownership of the buffer
+  // from the transfer queue to the graphics queue.
+  if(transferQueueFamily != graphicsQueueFamily) {
+    auto& graphicsCmd = GetCmd(QueueType::Graphics);
+    graphicsCmd.Begin();
+    graphicsCmd.AddBarrier(
+      buffer, ResourceState::Undefined, transferQueueFamily,
+      graphicsQueueFamily);
+    graphicsCmd.FlushBarriers();
+    graphicsCmd.End();
+
+    m_device.Submit(
+      {&graphicsCmd}, {&m_transfersFence}, {&m_transfersFence});
+  }
+#endif
+
+  m_transfersFence.Wait();
+  transferCmd.Reset();
+
+  m_freeStagingBuffers.push_back(&stagingBuffer);
+
+  return true;
 }
 
 bool RenderContext::Write(Image& image, Span<u8 const> data)
 {
+  const auto size = std::size(data);
+
+  VDLogI(
+    "Writing %zu bytes to image %s", size,
+    image.GetDesc().name.c_str());
+
   if(image.GetMemoryType() != MemoryType::Main)
     return image.Write(data);
 
-  return WithData(data, [this, &image](Buffer& src) {
-    GetCmd(QueueType::Copy).Copy(src, image, 0u, 0u, 0u);
-    return true;
-  });
-}
-
-void RenderContext::BeginTransfers()
-{
-  if(m_transfersActive) return;
-
-  auto& cmd = GetCmd(QueueType::Copy);
-  cmd.Begin();
-  m_transfersActive = true;
-}
-
-void RenderContext::EndTransfers()
-{
-  if(!m_transfersActive) return;
-
-  auto& cmd = GetCmd(QueueType::Copy);
-  cmd.End();
-
-  CommandBuffer* cmds[]    = {&cmd};
-  Fence*         signals[] = {&m_transfersFence};
-
-  m_transfersFence.Step();
-  m_device.Submit(cmds, {}, signals);
-  m_transfersFence.Wait();
-
-  m_freeStagingBuffers.clear();
-  for(auto& buf: m_stagingBuffers) {
-    m_freeStagingBuffers.push_back(buf.get());
+  auto& stagingBuffer = getStagingBuffer(std::size(data));
+  if(!stagingBuffer.Write(data)) {
+    m_freeStagingBuffers.push_back(&stagingBuffer);
+    return false;
   }
 
-  // Smallest -> Largest
-  std::sort(
-    m_freeStagingBuffers.begin(), m_freeStagingBuffers.end(),
-    [](auto& a, auto& b) { return a->GetSize() > b->GetSize(); });
+#ifdef VD_API_VK
+  uint32_t transferQueueFamily =
+    m_device.GetQueueFamily(QueueType::Copy);
+  uint32_t graphicsQueueFamily =
+    m_device.GetQueueFamily(QueueType::Graphics);
+#endif
 
-  m_transfersActive = false;
+  // According to the spec, if we don't care about keeping the buffer contents
+  // there is no need to transfer the buffer ownership to the copy queue family.
+
+  auto& transferCmd = GetCmd(QueueType::Copy);
+
+  transferCmd.Begin();
+  transferCmd.AddBarrier(stagingBuffer, ResourceState::CopySrc);
+  transferCmd.AddBarrier(image, ResourceState::CopyDst);
+  transferCmd.FlushBarriers();
+  transferCmd.Copy(stagingBuffer, image);
+
+#ifdef VD_API_VK
+  // If the transfer queue family is different from the graphics queue family
+  // we need to transfer the ownership of the image from the transfer queue
+  // to the graphics queue with a barrier.
+  if(transferQueueFamily != graphicsQueueFamily) {
+    transferCmd.AddBarrier(
+      image, ResourceState::ShaderResourceGraphics, transferQueueFamily,
+      graphicsQueueFamily);
+    transferCmd.FlushBarriers();
+  }
+#endif
+
+  transferCmd.End();
+
+  m_device.Submit({&transferCmd}, {}, {&m_transfersFence});
+
+#ifdef VD_API_VK
+
+  // If the transfer queue family is different from the graphics queue
+  // family we need to wait for the transfer queue to finish before
+  // we can use the buffer in the graphics queue.
+  // And we also need a barrier to transfer the ownership of the buffer
+  // from the transfer queue to the graphics queue.
+  if(transferQueueFamily != graphicsQueueFamily) {
+    auto& graphicsCmd = GetCmd(QueueType::Graphics);
+    graphicsCmd.Begin();
+    graphicsCmd.AddBarrier(
+      image, ResourceState::ShaderResourceGraphics, transferQueueFamily,
+      graphicsQueueFamily);
+    graphicsCmd.FlushBarriers();
+    graphicsCmd.End();
+
+    m_device.Submit(
+      {&graphicsCmd}, {&m_transfersFence}, {&m_transfersFence});
+  }
+#endif
+
+  m_transfersFence.Wait();
+  transferCmd.Reset();
+
+  m_freeStagingBuffers.push_back(&stagingBuffer);
+
+  return true;
 }
 
 void vd::RenderContext::Submit(
-  Span<CommandBuffer*> cmdbufs, Span<Fence*> waits,
-  Span<Fence*> signals, SwapchainDep swapchainDep)
+  Arr<CommandBuffer*> cmdbufs, Arr<Fence*> waits, Arr<Fence*> signals,
+  SwapchainDep swapchainDep)
 {
   auto& submitFence = getInFlightFence();
-  m_device.Submit(cmdbufs, waits, signals, &submitFence, swapchainDep);
+  m_device.Submit(
+    std::move(cmdbufs), std::move(waits), std::move(signals),
+    &submitFence, swapchainDep);
 }
 
 void vd::RenderContext::WaitInFlightOperations()
@@ -147,8 +237,13 @@ Buffer& RenderContext::getStagingBuffer(u64 size)
   }
 
   auto buf = std::make_unique<Buffer>(
-    m_device,
-    Buffer::Desc{"Staging", {}, size, {}, MemoryType::Upload});
+    m_device, Buffer::Desc{
+                .name        = "Staging",
+                .usage       = {},
+                .size        = size,
+                .defaultView = {},
+                .memoryType  = MemoryType::Upload,
+                .isStaging   = true});
   m_stagingBuffers.push_back(std::move(buf));
   return *m_stagingBuffers.back();
 }

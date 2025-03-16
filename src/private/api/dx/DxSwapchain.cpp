@@ -86,10 +86,12 @@ void Swapchain::Resize(Opt<UInt2> size)
   }
 
   for(u32 idx = 0u; idx < m_imageCount; ++idx) {
-    m_acquireFences.push_back(
-      std::make_unique<Fence>(m_device, Fence::Type::Timeline));
-    m_releaseFences.push_back(
-      std::make_unique<Fence>(m_device, Fence::Type::Timeline));
+    m_acquireFences.push_back(std::make_unique<Fence>(
+      m_device, formatString("Swapchain Acquire Fence #%u", idx),
+      Fence::Type::Timeline));
+    m_releaseFences.push_back(std::make_unique<Fence>(
+      m_device, formatString("Swapchain Release Fence #%u", idx),
+      Fence::Type::Timeline));
   }
 }
 

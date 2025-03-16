@@ -94,7 +94,7 @@ const VkAllocationCallbacks* Device::GetAllocationCallbacks() const
 }
 
 void Device::Submit(
-  Span<CommandBuffer*> cmds, Span<Fence*> waits, Span<Fence*> signals,
+  Arr<CommandBuffer*> cmds, Arr<Fence*> waits, Arr<Fence*> signals,
   Fence* submitFence, SwapchainDep swapchainDep)
 {
   if(cmds.size() == 0u) return;
@@ -102,82 +102,98 @@ void Device::Submit(
   const auto  queueType = cmds[0]->GetQueueType();
   const auto& queue     = m_queues[enumValue(queueType)];
 
-  Arr<VkCommandBuffer>      vkCmds;
-  Arr<VkSemaphore>          vkWaitHandles;
-  Arr<u64>                  vkWaitValues;
-  Arr<VkPipelineStageFlags> vkWaitStages;
-  Arr<VkSemaphore>          vkSignalHandles;
-  Arr<u64>                  vkSignalValues;
+  Arr<VkCommandBufferSubmitInfo> vkCmdInfos;
+  Arr<VkSemaphoreSubmitInfo>     vkWaitSemInfos;
+  Arr<VkSemaphoreSubmitInfo>     vkSignalSemInfos;
 
-  VDLogV(
-    "Submitting %u command buffers on queue %s", cmds.size(),
-    queue.name.c_str());
+  //VDLogV(
+  //  "Submitting %zu command buffers on queue %s", cmds.size(),
+  //  queue.name.c_str());
 
   for(auto& cmd: cmds) {
     if(cmd->GetQueueType() != queueType)
       throw std::runtime_error("Command buffer queue mismatch");
-    vkCmds.push_back(cmd->GetHandle());
+
+    vkCmdInfos.push_back(VkCommandBufferSubmitInfo{
+      .sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+      .pNext         = nullptr,
+      .commandBuffer = cmd->GetHandle(),
+      .deviceMask    = 0});
   }
 
   for(auto& wait: waits) {
-    vkWaitHandles.push_back(wait->GetSemaphoreHandle());
-    vkWaitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT); // TODO
-    vkWaitValues.push_back(wait->GetTarget());
-    VDLogV("- Wait: %s", wait->GetName().c_str());
+    vkWaitSemInfos.push_back(VkSemaphoreSubmitInfo{
+      .sType       = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+      .pNext       = nullptr,
+      .semaphore   = wait->GetSemaphoreHandle(),
+      .value       = wait->GetTarget(),
+      .stageMask   = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+      .deviceIndex = 0});
+    VDLogV(
+      "- Wait: %s (%llu)", wait->GetName().c_str(), wait->GetTarget());
   }
 
   if(
     swapchainDep == SwapchainDep::Acquire ||
     swapchainDep == SwapchainDep::AcquireRelease) {
-    vkWaitHandles.push_back(
-      m_swapchain->GetAcquireFence().GetSemaphoreHandle());
-    vkWaitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT); // TODO
-    VDLogV(
-      "- Wait SC: %s",
-      m_swapchain->GetAcquireFence().GetName().c_str());
+    vkWaitSemInfos.push_back(VkSemaphoreSubmitInfo{
+      .sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+      .pNext     = nullptr,
+      .semaphore = m_swapchain->GetAcquireFence().GetSemaphoreHandle(),
+      .value     = 0, // Binary semaphore
+      .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+      .deviceIndex = 0});
+    //VDLogV(
+    //  "- Wait SC: %s",
+    //  m_swapchain->GetAcquireFence().GetName().c_str());
   }
 
   for(auto& signal: signals) {
-    vkSignalHandles.push_back(signal->GetSemaphoreHandle());
-    vkSignalValues.push_back(signal->GetTarget());
-    VDLogV("- Signal: %s", signal->GetName().c_str());
+    if(signal->GetType() == Fence::Type::Timeline) { signal->Step(); }
+
+    vkSignalSemInfos.push_back(VkSemaphoreSubmitInfo{
+      .sType       = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+      .pNext       = nullptr,
+      .semaphore   = signal->GetSemaphoreHandle(),
+      .value       = signal->GetTarget(),
+      .stageMask   = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+      .deviceIndex = 0});
+    //VDLogV(
+    //  "- Signal: %s (%llu)", signal->GetName().c_str(),
+    //  signal->GetTarget());
   }
 
   if(
     swapchainDep == SwapchainDep::Release ||
     swapchainDep == SwapchainDep::AcquireRelease) {
-    vkSignalHandles.push_back(
-      m_swapchain->GetReleaseFence().GetSemaphoreHandle());
-    VDLogV(
-      "- Signal SC: %s",
-      m_swapchain->GetReleaseFence().GetName().c_str());
+    vkSignalSemInfos.push_back(VkSemaphoreSubmitInfo{
+      .sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+      .pNext     = nullptr,
+      .semaphore = m_swapchain->GetReleaseFence().GetSemaphoreHandle(),
+      .value     = 0, // Binary semaphore
+      .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+      .deviceIndex = 0});
+    //VDLogV(
+    //  "- Signal SC: %s",
+    //  m_swapchain->GetReleaseFence().GetName().c_str());
   }
 
-  VkTimelineSemaphoreSubmitInfo vkTimelineInfo = {
-    .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-    .pNext = nullptr,
-    .waitSemaphoreValueCount   = size32(vkWaitValues),
-    .pWaitSemaphoreValues      = std::data(vkWaitValues),
-    .signalSemaphoreValueCount = size32(vkSignalValues),
-    .pSignalSemaphoreValues    = std::data(vkSignalValues)};
-
-  // https://github.com/SaschaWillems/Vulkan/issues/433
-  VkSubmitInfo vkInfo{
-    .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-    .pNext                = &vkTimelineInfo,
-    .waitSemaphoreCount   = size32(vkWaitHandles),
-    .pWaitSemaphores      = std::data(vkWaitHandles),
-    .pWaitDstStageMask    = std::data(vkWaitStages),
-    .commandBufferCount   = size32(vkCmds),
-    .pCommandBuffers      = std::data(vkCmds),
-    .signalSemaphoreCount = size32(vkSignalHandles),
-    .pSignalSemaphores    = std::data(vkSignalHandles)};
+  VkSubmitInfo2 submitInfo{
+    .sType                    = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+    .pNext                    = nullptr,
+    .flags                    = 0,
+    .waitSemaphoreInfoCount   = vd::size32(vkWaitSemInfos),
+    .pWaitSemaphoreInfos      = std::data(vkWaitSemInfos),
+    .commandBufferInfoCount   = vd::size32(vkCmdInfos),
+    .pCommandBufferInfos      = std::data(vkCmdInfos),
+    .signalSemaphoreInfoCount = vd::size32(vkSignalSemInfos),
+    .pSignalSemaphoreInfos    = std::data(vkSignalSemInfos)};
 
   auto vkSubmitFence =
     submitFence ? submitFence->GetFenceHandle() : VK_NULL_HANDLE;
 
-  VDVkTry(m_dispatcher->QueueSubmit(
-    queue.handle, 1u, &vkInfo, vkSubmitFence));
+  VDVkTry(m_dispatcher->QueueSubmit2(
+    queue.handle, 1u, &submitInfo, vkSubmitFence));
 }
 
 void Device::WaitIdle(QueueType queue)
@@ -355,10 +371,9 @@ void Device::create_device([[maybe_unused]] const Desc& desc)
 {
   // Features
   PhysicalDevice::Features features;
-  features.timeline.timelineSemaphore = VK_TRUE;
-
+  features.timeline.timelineSemaphore        = VK_TRUE;
+  features.synchronization2.synchronization2 = VK_TRUE;
   features.dynamicRendering.dynamicRendering = VK_TRUE;
-
   features.descriptorIndexing
     .shaderSampledImageArrayNonUniformIndexing       = VK_TRUE;
   features.descriptorIndexing.runtimeDescriptorArray = VK_TRUE;

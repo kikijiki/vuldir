@@ -8,7 +8,7 @@ VSOut MainVS(VSIn input)
 {
   VSOut ret = (VSOut)0;
 
-  float4 wpos = mul(GetMesh().world, input.GetPosition());
+  float4 wpos = mul(GetPrim().world, input.GetPosition());
   ret.pos     = mul(GetScene().viewProjection, wpos);
 
   return ret;

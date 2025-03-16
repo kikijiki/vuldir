@@ -51,6 +51,7 @@ enum class DescriptorType {
 };
 
 enum class ResourceState {
+  None,
   Undefined,
 
   // D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER
@@ -599,5 +600,11 @@ struct DepthStencil {
 };
 
 using ClearValue = std::variant<Float4, UInt4, Int4, DepthStencil>;
+
+enum class IndexType {
+  VD_API_VALUE(U16, VK_INDEX_TYPE_UINT16, DXGI_FORMAT_R16_UINT),
+  VD_API_VALUE(U32, VK_INDEX_TYPE_UINT32, DXGI_FORMAT_R32_UINT)
+};
+VD_API_VALUE_CONVERTER(IndexType, VkIndexType, DXGI_FORMAT);
 
 } // namespace vd

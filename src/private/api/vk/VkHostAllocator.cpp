@@ -147,9 +147,9 @@ void* VKAPI_CALL HostAllocator::vkAllocation(
 {
   auto&      self       = *reinterpret_cast<HostAllocator*>(pUserData);
   const auto allocation = self.internalAllocate(size, alignment);
-  VDLogV(
-    "[  ALLOC] size: %zu (%zu), usage: %lld", allocation.size, size,
-    self.m_usage.load(std::memory_order::memory_order_relaxed));
+  //VDLogV(
+  //  "[  ALLOC] size: %zu (%zu), usage: %lld", allocation.size, size,
+  //  self.m_usage.load(std::memory_order::memory_order_relaxed));
   return allocation.pMemory;
 }
 
@@ -160,9 +160,9 @@ void* VKAPI_CALL HostAllocator::vkReallocation(
   auto&      self = *reinterpret_cast<HostAllocator*>(pUserData);
   const auto allocation =
     self.internalReallocate(pOriginal, size, alignment);
-  VDLogV(
-    "[REALLOC] size: %zu (%zu), usage: %lld", allocation.size, size,
-    self.m_usage.load(std::memory_order::memory_order_relaxed));
+  //VDLogV(
+  //  "[REALLOC] size: %zu (%zu), usage: %lld", allocation.size, size,
+  //  self.m_usage.load(std::memory_order::memory_order_relaxed));
   return allocation.pMemory;
 }
 
@@ -173,9 +173,9 @@ void VKAPI_CALL HostAllocator::vkFree(void* pUserData, void* pMemory)
   [[maybe_unused]] auto size = getAllocationSize(pMemory);
 
   self.internalFree(pMemory);
-  VDLogV(
-    "[   FREE] size: %zu, usage: %lld", size,
-    self.m_usage.load(std::memory_order::memory_order_relaxed));
+  //VDLogV(
+  //  "[   FREE] size: %zu, usage: %lld", size,
+  //  self.m_usage.load(std::memory_order::memory_order_relaxed));
 }
 
 void VKAPI_CALL HostAllocator::vkInternalAllocationNotification(
@@ -185,9 +185,9 @@ void VKAPI_CALL HostAllocator::vkInternalAllocationNotification(
 {
   auto& self = *reinterpret_cast<HostAllocator*>(pUserData);
   self.m_usage.fetch_add(size, std::memory_order_relaxed);
-  VDLogV(
-    "[ IALLOC] size: %zu, usage: %lld", size,
-    self.m_usage.load(std::memory_order::memory_order_relaxed));
+  //VDLogV(
+  //  "[ IALLOC] size: %zu, usage: %lld", size,
+  //  self.m_usage.load(std::memory_order::memory_order_relaxed));
 }
 
 void VKAPI_CALL HostAllocator::vkInternalFreeNotification(
@@ -197,7 +197,7 @@ void VKAPI_CALL HostAllocator::vkInternalFreeNotification(
 {
   auto& self = *reinterpret_cast<HostAllocator*>(pUserData);
   self.m_usage.fetch_sub(size, std::memory_order_relaxed);
-  VDLogV(
-    "[  IFREE] size: %zu, usage: %lld", size,
-    self.m_usage.load(std::memory_order::memory_order_relaxed));
+  //VDLogV(
+  //  "[  IFREE] size: %zu, usage: %lld", size,
+  //  self.m_usage.load(std::memory_order::memory_order_relaxed));
 }

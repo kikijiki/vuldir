@@ -97,7 +97,7 @@ void Dispatcher::loadDefault()
   GetDefaultPFN(GetPhysicalDeviceFormatProperties2);
   GetDefaultPFN(GetPhysicalDeviceImageFormatProperties);
   GetDefaultPFN(GetDeviceQueue);
-  GetDefaultPFN(QueueSubmit);
+  GetDefaultPFN(QueueSubmit2);
   GetDefaultPFN(QueueWaitIdle);
   GetDefaultPFN(QueueBindSparse);
   GetDefaultPFN(CreateBuffer);
@@ -186,12 +186,12 @@ void Dispatcher::loadDefault()
   GetDefaultPFN(CmdSetStencilReference);
   GetDefaultPFN(CmdSetStencilWriteMask);
   GetDefaultPFN(CmdSetViewport);
-  GetDefaultPFN(CmdCopyBuffer);
-  GetDefaultPFN(CmdCopyImage);
-  GetDefaultPFN(CmdCopyImageToBuffer);
-  GetDefaultPFN(CmdCopyBufferToImage);
-  GetDefaultPFN(CmdBlitImage);
-  GetDefaultPFN(CmdResolveImage);
+  GetDefaultPFN(CmdCopyBuffer2);
+  GetDefaultPFN(CmdCopyImage2);
+  GetDefaultPFN(CmdCopyImageToBuffer2);
+  GetDefaultPFN(CmdCopyBufferToImage2);
+  GetDefaultPFN(CmdBlitImage2);
+  GetDefaultPFN(CmdResolveImage2);
   GetDefaultPFN(CmdUpdateBuffer);
   GetDefaultPFN(CmdDraw);
   GetDefaultPFN(CmdDrawIndirect);
@@ -204,15 +204,15 @@ void Dispatcher::loadDefault()
   GetDefaultPFN(CmdClearColorImage);
   GetDefaultPFN(CmdClearDepthStencilImage);
   GetDefaultPFN(CmdFillBuffer);
-  GetDefaultPFN(CmdPipelineBarrier);
-  GetDefaultPFN(CmdSetEvent);
-  GetDefaultPFN(CmdResetEvent);
-  GetDefaultPFN(CmdWaitEvents);
+  GetDefaultPFN(CmdPipelineBarrier2);
+  GetDefaultPFN(CmdSetEvent2);
+  GetDefaultPFN(CmdResetEvent2);
+  GetDefaultPFN(CmdWaitEvents2);
   GetDefaultPFN(CmdBeginQuery);
   GetDefaultPFN(CmdEndQuery);
   GetDefaultPFN(CmdCopyQueryPoolResults);
   GetDefaultPFN(CmdResetQueryPool);
-  GetDefaultPFN(CmdWriteTimestamp);
+  GetDefaultPFN(CmdWriteTimestamp2);
 
   // Extensions /////////////////////////////////////////////////////
   // - skip -
@@ -243,7 +243,7 @@ void Dispatcher::loadInstance(VkInstance instance)
   GetInstancePFN(GetPhysicalDeviceFormatProperties2);
   GetInstancePFN(GetPhysicalDeviceImageFormatProperties);
   GetInstancePFN(GetDeviceQueue);
-  GetInstancePFN(QueueSubmit);
+  GetInstancePFN(QueueSubmit2);
   GetInstancePFN(QueueWaitIdle);
   GetInstancePFN(QueueBindSparse);
   GetInstancePFN(CreateBuffer);
@@ -332,12 +332,12 @@ void Dispatcher::loadInstance(VkInstance instance)
   GetInstancePFN(CmdSetStencilReference);
   GetInstancePFN(CmdSetStencilWriteMask);
   GetInstancePFN(CmdSetViewport);
-  GetInstancePFN(CmdCopyBuffer);
-  GetInstancePFN(CmdCopyImage);
-  GetInstancePFN(CmdCopyImageToBuffer);
-  GetInstancePFN(CmdCopyBufferToImage);
-  GetInstancePFN(CmdBlitImage);
-  GetInstancePFN(CmdResolveImage);
+  GetInstancePFN(CmdCopyBuffer2);
+  GetInstancePFN(CmdCopyImage2);
+  GetInstancePFN(CmdCopyImageToBuffer2);
+  GetInstancePFN(CmdCopyBufferToImage2);
+  GetInstancePFN(CmdBlitImage2);
+  GetInstancePFN(CmdResolveImage2);
   GetInstancePFN(CmdUpdateBuffer);
   GetInstancePFN(CmdDraw);
   GetInstancePFN(CmdDrawIndirect);
@@ -350,15 +350,15 @@ void Dispatcher::loadInstance(VkInstance instance)
   GetInstancePFN(CmdClearColorImage);
   GetInstancePFN(CmdClearDepthStencilImage);
   GetInstancePFN(CmdFillBuffer);
-  GetInstancePFN(CmdPipelineBarrier);
-  GetInstancePFN(CmdSetEvent);
-  GetInstancePFN(CmdResetEvent);
-  GetInstancePFN(CmdWaitEvents);
+  GetInstancePFN(CmdPipelineBarrier2);
+  GetInstancePFN(CmdSetEvent2);
+  GetInstancePFN(CmdResetEvent2);
+  GetInstancePFN(CmdWaitEvents2);
   GetInstancePFN(CmdBeginQuery);
   GetInstancePFN(CmdEndQuery);
   GetInstancePFN(CmdCopyQueryPoolResults);
   GetInstancePFN(CmdResetQueryPool);
-  GetInstancePFN(CmdWriteTimestamp);
+  GetInstancePFN(CmdWriteTimestamp2);
 
   // Extensions /////////////////////////////////////////////////////
 
@@ -427,7 +427,7 @@ void Dispatcher::loadDevice(VkDevice device)
   GetDevicePFN(GetPhysicalDeviceFormatProperties2);
   GetDevicePFN(GetPhysicalDeviceImageFormatProperties);
   GetDevicePFN(GetDeviceQueue);
-  GetDevicePFN(QueueSubmit);
+  GetDevicePFN(QueueSubmit2);
   GetDevicePFN(QueueWaitIdle);
   GetDevicePFN(QueueBindSparse);
   GetDevicePFN(CreateBuffer);
@@ -516,12 +516,12 @@ void Dispatcher::loadDevice(VkDevice device)
   GetDevicePFN(CmdSetStencilReference);
   GetDevicePFN(CmdSetStencilWriteMask);
   GetDevicePFN(CmdSetViewport);
-  GetDevicePFN(CmdCopyBuffer);
-  GetDevicePFN(CmdCopyImage);
-  GetDevicePFN(CmdCopyImageToBuffer);
-  GetDevicePFN(CmdCopyBufferToImage);
-  GetDevicePFN(CmdBlitImage);
-  GetDevicePFN(CmdResolveImage);
+  GetDevicePFN(CmdCopyBuffer2);
+  GetDevicePFN(CmdCopyImage2);
+  GetDevicePFN(CmdCopyImageToBuffer2);
+  GetDevicePFN(CmdCopyBufferToImage2);
+  GetDevicePFN(CmdBlitImage2);
+  GetDevicePFN(CmdResolveImage2);
   GetDevicePFN(CmdUpdateBuffer);
   GetDevicePFN(CmdDraw);
   GetDevicePFN(CmdDrawIndirect);
@@ -534,15 +534,15 @@ void Dispatcher::loadDevice(VkDevice device)
   GetDevicePFN(CmdClearColorImage);
   GetDevicePFN(CmdClearDepthStencilImage);
   GetDevicePFN(CmdFillBuffer);
-  GetDevicePFN(CmdPipelineBarrier);
-  GetDevicePFN(CmdSetEvent);
-  GetDevicePFN(CmdResetEvent);
-  GetDevicePFN(CmdWaitEvents);
+  GetDevicePFN(CmdPipelineBarrier2);
+  GetDevicePFN(CmdSetEvent2);
+  GetDevicePFN(CmdResetEvent2);
+  GetDevicePFN(CmdWaitEvents2);
   GetDevicePFN(CmdBeginQuery);
   GetDevicePFN(CmdEndQuery);
   GetDevicePFN(CmdCopyQueryPoolResults);
   GetDevicePFN(CmdResetQueryPool);
-  GetDevicePFN(CmdWriteTimestamp);
+  GetDevicePFN(CmdWriteTimestamp2);
 
   // Extensions /////////////////////////////////////////////////////
 

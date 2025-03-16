@@ -176,11 +176,13 @@ inline constexpr VkDescriptorType convert(DescriptorType v)
   }
 }
 
-inline constexpr VkAccessFlags convert(ResourceState v)
+inline constexpr VkAccessFlags toAccessFlags(ResourceState v)
 {
   switch(v) {
+    case ResourceState::None:
+      return VK_ACCESS_NONE;
     case ResourceState::Undefined:
-      return 0xFFFFFFFF;
+      return VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
     case ResourceState::VertexBuffer:
       return VK_ACCESS_SHADER_READ_BIT |
              VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
@@ -192,11 +194,11 @@ inline constexpr VkAccessFlags convert(ResourceState v)
       return VK_ACCESS_SHADER_READ_BIT |
              VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
     case ResourceState::RenderTarget:
-      return VK_ACCESS_SHADER_WRITE_BIT;
+      return VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     case ResourceState::DepthStencilRW:
-      return VK_ACCESS_SHADER_WRITE_BIT;
+      return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     case ResourceState::DepthStencilRO:
-      return VK_ACCESS_SHADER_READ_BIT;
+      return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
     case ResourceState::ShaderResourceGraphics:
       return VK_ACCESS_SHADER_READ_BIT;
     case ResourceState::ShaderResourceCompute:
@@ -215,9 +217,146 @@ inline constexpr VkAccessFlags convert(ResourceState v)
   }
 }
 
+inline constexpr VkAccessFlags2 toAccessFlags2(ResourceState v)
+{
+  switch(v) {
+    case ResourceState::None:
+      return VK_ACCESS_2_NONE;
+    case ResourceState::Undefined:
+      return VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    case ResourceState::VertexBuffer:
+      return VK_ACCESS_2_SHADER_READ_BIT |
+             VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT;
+    case ResourceState::IndexBuffer:
+      return VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT;
+    case ResourceState::ConstantBuffer:
+      return VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT;
+    case ResourceState::IndirectArgument:
+      return VK_ACCESS_2_SHADER_READ_BIT |
+             VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
+    case ResourceState::RenderTarget:
+      return VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    case ResourceState::DepthStencilRW:
+      return VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    case ResourceState::DepthStencilRO:
+      return VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    case ResourceState::ShaderResourceGraphics:
+      return VK_ACCESS_2_SHADER_READ_BIT;
+    case ResourceState::ShaderResourceCompute:
+      return VK_ACCESS_2_SHADER_READ_BIT;
+    case ResourceState::UnorderedAccess:
+      return VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
+    case ResourceState::CopySrc:
+      return VK_ACCESS_2_TRANSFER_READ_BIT;
+    case ResourceState::CopyDst:
+      return VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    case ResourceState::Present:
+      return VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT |
+             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    default:
+      throw std::runtime_error("Invalid resource state");
+  }
+}
+
+inline constexpr VkPipelineStageFlags
+toPipelineStage(ResourceState state)
+{
+  switch(state) {
+    case ResourceState::None:
+    case ResourceState::Undefined:
+      return VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+
+    case ResourceState::VertexBuffer:
+    case ResourceState::IndexBuffer:
+      return VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
+
+    case ResourceState::ConstantBuffer:
+      return VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |
+             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+
+    case ResourceState::IndirectArgument:
+      return VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT;
+
+    case ResourceState::RenderTarget:
+      return VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+    case ResourceState::DepthStencilRW:
+    case ResourceState::DepthStencilRO:
+      return VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+             VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+
+    case ResourceState::ShaderResourceGraphics:
+      return VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |
+             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+
+    case ResourceState::ShaderResourceCompute:
+    case ResourceState::UnorderedAccess:
+      return VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+
+    case ResourceState::CopySrc:
+    case ResourceState::CopyDst:
+      return VK_PIPELINE_STAGE_TRANSFER_BIT;
+
+    case ResourceState::Present:
+      return VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+    default:
+      return VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+  }
+}
+
+inline constexpr VkPipelineStageFlags2
+toPipelineStage2(ResourceState state)
+{
+  switch(state) {
+    case ResourceState::None:
+    case ResourceState::Undefined:
+      return VK_PIPELINE_STAGE_2_NONE;
+
+    case ResourceState::VertexBuffer:
+    case ResourceState::IndexBuffer:
+      return VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT;
+
+    case ResourceState::ConstantBuffer:
+      return VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
+             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+
+    case ResourceState::IndirectArgument:
+      return VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
+
+    case ResourceState::RenderTarget:
+      return VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+    case ResourceState::DepthStencilRW:
+    case ResourceState::DepthStencilRO:
+      return VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+             VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+
+    case ResourceState::ShaderResourceGraphics:
+      return VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
+             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+
+    case ResourceState::ShaderResourceCompute:
+    case ResourceState::UnorderedAccess:
+      return VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+
+    case ResourceState::CopySrc:
+    case ResourceState::CopyDst:
+      return VK_PIPELINE_STAGE_2_COPY_BIT;
+
+    case ResourceState::Present:
+      return VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+    default:
+      return VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+  }
+}
+
 inline constexpr VkImageLayout getVkImageLayout(ResourceState v)
 {
   switch(v) {
+    case ResourceState::None:
+      return VK_IMAGE_LAYOUT_UNDEFINED;
     case ResourceState::Undefined:
       return VK_IMAGE_LAYOUT_UNDEFINED;
     case ResourceState::RenderTarget:

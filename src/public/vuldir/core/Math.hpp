@@ -671,5 +671,67 @@ inline /*constexpr*/ Float44 Rotation(Float3 v)
   return Mul(rx, ry, rz);
 }
 
+// IEEE-754 float16 conversion functions
+inline u16 Float32ToFloat16(f32 f)
+{
+  u32 x        = *reinterpret_cast<u32*>(&f);
+  u32 sign     = (x >> 31) & 0x1;
+  u32 exp      = (x >> 23) & 0xFF;
+  u32 mantissa = x & 0x7FFFFF;
+
+  if(exp == 0xFF) {     // Handle infinity and NaN
+    if(mantissa == 0) { // Infinity
+      return static_cast<u16>((sign << 15) | 0x7C00);
+    } else { // NaN
+      return static_cast<u16>((sign << 15) | 0x7C00 | (mantissa >> 13));
+    }
+  }
+
+  // Convert normalized numbers
+  int newExp = exp - 127 + 15;
+  if(newExp >= 31) { // Overflow to infinity
+    return static_cast<u16>((sign << 15) | 0x7C00);
+  } else if(newExp <= 0) { // Underflow to 0 or denormal
+    if(newExp < -10) {
+      return static_cast<u16>(sign << 15); // Zero
+    }
+    // Denormal
+    mantissa = (mantissa | 0x800000) >> (14 - newExp);
+    return static_cast<u16>((sign << 15) | mantissa);
+  }
+
+  // Regular normalized number
+  return static_cast<u16>(
+    (sign << 15) | (newExp << 10) | (mantissa >> 13));
+}
+
+inline f32 Float16ToFloat32(u16 h)
+{
+  u32 sign     = (h >> 15) & 0x1;
+  u32 exp      = (h >> 10) & 0x1F;
+  u32 mantissa = h & 0x3FF;
+
+  u32 f = 0;
+  if(exp == 0) { // Zero or denormal
+    if(mantissa == 0) {
+      f = sign << 31;
+    } else { // Denormal
+      exp = 0;
+      while((mantissa & 0x400) == 0) {
+        mantissa <<= 1;
+        exp++;
+      }
+      mantissa &= 0x3FF;
+      f = (sign << 31) | ((127 - 15 - exp) << 23) | (mantissa << 13);
+    }
+  } else if(exp == 0x1F) { // Infinity or NaN
+    f = (sign << 31) | (0xFF << 23) | (mantissa << 13);
+  } else { // Normalized number
+    f = (sign << 31) | ((exp + (127 - 15)) << 23) | (mantissa << 13);
+  }
+
+  return *reinterpret_cast<f32*>(&f);
+}
+
 } // namespace mt
 } // namespace vd

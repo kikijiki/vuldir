@@ -50,10 +50,12 @@ MemoryPool::Allocation MemoryPool::Allocate(u64 size, u64 alignment)
   auto block = *blockIt;
   deleteFreeBlock(blockIt);
 
-  const auto sizeDiff = block.size - size;
-  if(sizeDiff > 64u) {
-    block.size = size;
-    pushFreeBlock({block.offset + size, sizeDiff});
+  const auto padding  = vd::getAlignmentDiff(block.offset, alignment);
+  const auto sizeUsed = size + padding;
+  const auto sizeLeft = block.size - sizeUsed;
+  if(sizeLeft > 64u) {
+    block.size = sizeUsed;
+    pushFreeBlock({block.offset + sizeUsed, sizeLeft});
   }
 
   if(m_debugVerbose) {
@@ -70,6 +72,15 @@ MemoryPool::Allocation MemoryPool::Allocate(u64 size, u64 alignment)
   alloc.size        = size;
   alloc.blockOffset = block.offset;
   alloc.blockSize   = block.size;
+
+  if(m_debugVerbose) {
+    VDLogV(
+      "[MemoryPool %s] Allocated [Offset: %llu, Size: %llu] from block "
+      "[Offset: "
+      "%llu, Size: %llu]",
+      m_name.c_str(), alloc.offset, alloc.size, block.offset,
+      block.size);
+  }
 
   return alloc;
 }
@@ -158,8 +169,8 @@ void MemoryPool::sortFreeBlocks()
 
 void MemoryPool::logDetailedUsage()
 {
-  VDLogV("[MemoryPool %s] Free blocks (offset size)", m_name.c_str());
+  VDLogV("[MemoryPool %s] Free blocks", m_name.c_str());
   for([[maybe_unused]] auto& block: m_freeBlocks) {
-    VDLogV("- %.8llu %.8llu", block.offset, block.size);
+    VDLogV("- Offset: %.8llu Size: %.8llu", block.offset, block.size);
   }
 }

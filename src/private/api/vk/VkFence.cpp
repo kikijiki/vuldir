@@ -78,7 +78,7 @@ void Fence::Reset()
   VDAssertMsg(
     m_type == Type::Fence, "Invalid for non-fence semaphores");
 
-  if(!m_name.empty()) { VDLogV("Resetting fence %s", m_name.c_str()); }
+  //if(!m_name.empty()) { VDLogV("Resetting fence %s", m_name.c_str()); }
 
   m_device.api().ResetFences(1u, &m_fenceHandle);
 }
@@ -102,14 +102,14 @@ bool Fence::WaitValue(u64 value, u64 timeoutNs) const
     info.pSemaphores    = &m_semaphoreHandle;
     info.pValues        = &value;
 
-    if(!m_name.empty()) {
-      VDLogV("Waiting fence %s for value %llu", m_name.c_str(), value);
-    }
+    //if(!m_name.empty()) {
+    //  VDLogV("Waiting fence %s for value %llu", m_name.c_str(), value);
+    //}
 
     const auto result = m_device.api().WaitSemaphores(&info, timeoutNs);
     return result == VK_SUCCESS;
   } else {
-    if(!m_name.empty()) { VDLogV("Waiting fence %s", m_name.c_str()); }
+    //if(!m_name.empty()) { VDLogV("Waiting fence %s", m_name.c_str()); }
 
     const auto result =
       m_device.api().WaitForFences(1u, &m_fenceHandle, true, timeoutNs);
@@ -124,9 +124,9 @@ bool Fence::Signal(u64 value)
   if(m_type != Type::Timeline)
     throw std::runtime_error("Invalid for non-timeline fences");
 
-  if(!m_name.empty()) {
-    VDLogV("Signaling fence %s for value %llu", m_name.c_str(), value);
-  }
+  //if(!m_name.empty()) {
+  //  VDLogV("Signaling fence %s for value %llu", m_name.c_str(), value);
+  //}
 
   VkSemaphoreSignalInfo info;
   info.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO;
@@ -138,7 +138,7 @@ bool Fence::Signal(u64 value)
   return result == VK_SUCCESS;
 }
 
-Opt<u64> Fence::GetValue() const
+u64 Fence::GetValue() const
 {
   if(m_type != Type::Timeline)
     throw std::runtime_error("Invalid for non-timeline fences");
@@ -150,7 +150,7 @@ Opt<u64> Fence::GetValue() const
 
   if(result == VK_SUCCESS) return value;
   else
-    return std::nullopt;
+    return MaxU64;
 }
 
 bool Fence::wait(
@@ -186,12 +186,13 @@ bool Fence::wait(
   }
 
   VkSemaphore handles[maxFences];
-  VDLogV("Waiting for %llu fences", fences.size());
+
+  //VDLogV("Waiting for %llu fences", fences.size());
   for(u32 idx = 0u; idx < vd::size32(fences); ++idx) {
-    if(!fences[idx].m_name.empty()) {
-      VDLogV(
-        "- %s for value %llu", fences[idx].m_name.c_str(), values[idx]);
-    }
+    //if(!fences[idx].m_name.empty()) {
+    //  VDLogV(
+    //    "- %s for value %llu", fences[idx].m_name.c_str(), values[idx]);
+    //}
     handles[idx] = fences[idx].GetSemaphoreHandle();
   }
 

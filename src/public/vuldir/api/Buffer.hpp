@@ -20,6 +20,7 @@ public:
     u64                  size;
     Opt<ViewType>        defaultView;
     MemoryType           memoryType = MemoryType::Main;
+    bool                 isStaging  = false;
   };
 
   struct View {

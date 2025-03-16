@@ -4,6 +4,9 @@
 
 using namespace vd;
 
+//#define DBGLOG(...) VDLogI(__VA_ARGS__)
+#define DGBLOG(...)
+
 Fence::Fence(Device& device, Type type, u64 initialValue):
   m_device{device}, m_type{type}, m_target{0u}, m_handle{}, m_event{}
 {
@@ -46,8 +49,13 @@ bool Fence::Wait(u64 timeoutNs) const
 
 bool Fence::WaitValue(u64 value, u64 timeoutNs) const
 {
+  DGBLOG("Fence %s waiting for value %llu", m_name.c_str(), value);
+
   // If already completed return immediately.
-  if(m_handle->GetCompletedValue() >= value) return true;
+  if(m_handle->GetCompletedValue() >= value) {
+    DGBLOG("Fence %s already completed", m_name.c_str());
+    return true;
+  }
 
   // If not, wait on the event.
   if(FAILED(m_handle->SetEventOnCompletion(value, m_event)))
@@ -57,6 +65,10 @@ bool Fence::WaitValue(u64 value, u64 timeoutNs) const
     timeoutNs == MaxU64 ? MaxU32 : static_cast<u32>(timeoutNs / 1000u);
   const auto result = WaitForSingleObject(m_event, timeoutMs);
 
+  DGBLOG(
+    "Fence %s waiting for value %llu completed with result %u",
+    m_name.c_str(), value, result);
+
   return SUCCEEDED(result);
 }
 
@@ -64,18 +76,12 @@ bool Fence::Signal() { return Signal(m_target); }
 
 bool Fence::Signal(u64 value)
 {
+  DGBLOG("Fence %s signaling value %llu", m_name.c_str(), value);
   const auto result = m_handle->Signal(value);
   return SUCCEEDED(result);
 }
 
-Opt<u64> Fence::GetValue() const
-{
-  const auto value = m_handle->GetCompletedValue();
-
-  if(value == UINT64_MAX) return std::nullopt;
-  else
-    return value;
-}
+u64 Fence::GetValue() const { return m_handle->GetCompletedValue(); }
 
 bool Fence::wait(
   Span<Fence> fences, Span<u64> values, u64 timeoutNs, bool all)

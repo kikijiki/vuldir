@@ -251,17 +251,30 @@ Image::Image(Device& device, const Desc& desc):
     if(!m_allocation.IsValid())
       throw std::runtime_error("Failed to allocate memory");
 
-    D3D12_CLEAR_VALUE defaultClearValue{
-      .Format = convert(m_desc.format),
-      .Color  = {0.f, 0.f, 0.f, 0.f},
-    };
+    const D3D12_CLEAR_VALUE* clearValue        = nullptr;
+    D3D12_CLEAR_VALUE        defaultClearValue = {};
 
-    if(vd::getFormatAspect(m_desc.format) != ImageAspect::Color)
-      defaultClearValue.DepthStencil = {1.0f, 0u};
+    if(
+      res.Flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET |
+                   D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)) {
+      defaultClearValue.Format = convert(m_desc.format);
+
+      if(vd::getFormatAspect(m_desc.format) != ImageAspect::Color) {
+        defaultClearValue.DepthStencil.Depth   = 1.0f;
+        defaultClearValue.DepthStencil.Stencil = 0u;
+      } else {
+        defaultClearValue.Color[0] = 0.0f;
+        defaultClearValue.Color[1] = 0.0f;
+        defaultClearValue.Color[2] = 0.0f;
+        defaultClearValue.Color[3] = 1.0f;
+      }
+
+      clearValue = &defaultClearValue;
+    }
 
     VDDxTry(m_device.api().CreatePlacedResource(
       &m_allocation.pool->GetHandle(), m_allocation.offset, &res,
-      D3D12_RESOURCE_STATE_COMMON, &defaultClearValue,
+      D3D12_RESOURCE_STATE_COMMON, clearValue,
       IID_PPV_ARGS(&m_handle)));
   }
 
@@ -408,5 +421,5 @@ u32 Image::GetSubresourceIndex(u32 mip, u32 layer, u32 plane) const
     return mip + layer * m_desc.mips;
   else
     return mip + layer * m_desc.mips +
-           plane * m_desc.mips * m_desc.extent[3];
+           plane * m_desc.mips * m_desc.extent[2];
 }

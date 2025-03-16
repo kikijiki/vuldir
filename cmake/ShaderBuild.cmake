@@ -51,7 +51,7 @@ function(vd_add_shader)
         -I ${VD_SHADER_INCLUDE_DIR}
         -E ${SHADER_ENTRYPOINT}
         -D ${SHADER_STAGE_DEFINITION}=1
-        -no-legacy-cbuf-layout
+        #-no-legacy-cbuf-layout
         -res-may-alias)
 
       if(VD_API STREQUAL "vk")

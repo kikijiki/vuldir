@@ -33,9 +33,6 @@ public:
     return *m_cmdBufs[enumValue(type)];
   }
 
-  bool WithData(
-    Span<u8 const> data, const std::function<bool(Buffer&)>& fun);
-
   bool Write(Buffer& buffer, Span<u8 const> data);
   template<typename T>
   bool Write(Buffer& buffer, const T& data)
@@ -44,13 +41,15 @@ public:
   }
 
   bool Write(Image& image, Span<u8 const> data);
-
-  void BeginTransfers();
-  void EndTransfers();
+  template<typename T>
+  bool Write(Image& image, const T& data)
+  {
+    return Write(image, getBytes(data));
+  }
 
   void Submit(
-    Span<CommandBuffer*> cmdbufs, Span<Fence*> waits = {},
-    Span<Fence*> signals      = {},
+    Arr<CommandBuffer*> cmdbufs, Arr<Fence*> waits = {},
+    Arr<Fence*>  signals      = {},
     SwapchainDep swapchainDep = SwapchainDep::None);
 
   void WaitInFlightOperations();
@@ -66,12 +65,12 @@ private:
   SArr<UPtr<CommandPool>, QueueTypeCount>   m_cmdPools;
   SArr<UPtr<CommandBuffer>, QueueTypeCount> m_cmdBufs;
 
-  bool              m_transfersActive = false;
   Fence             m_transfersFence;
   Arr<UPtr<Fence>>  m_inFlightFences;
   u32               m_inFlightFenceCount;
   Arr<UPtr<Buffer>> m_stagingBuffers;
   Arr<Buffer*>      m_freeStagingBuffers;
+  Arr<Buffer*>      m_buffersNeedingAcquire;
 };
 
 } // namespace vd

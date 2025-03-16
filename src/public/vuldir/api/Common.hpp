@@ -13,10 +13,6 @@
   #define VD_API_VALUE(vd, vk, dx) vd = vk
 
   #define VD_API_VALUE_CONVERTER(VDTYPE, VKTYPE, DXTYPE) \
-    inline constexpr VKTYPE convert(VDTYPE value)        \
-    {                                                    \
-      return static_cast<VKTYPE>(value);                 \
-    }                                                    \
     inline constexpr VDTYPE convert(VKTYPE value)        \
     {                                                    \
       return static_cast<VDTYPE>(value);                 \
@@ -43,10 +39,6 @@
     inline constexpr DXTYPE convert(VDTYPE value)        \
     {                                                    \
       return static_cast<DXTYPE>(value);                 \
-    }                                                    \
-    inline constexpr VDTYPE convert(DXTYPE value)        \
-    {                                                    \
-      return static_cast<VDTYPE>(value);                 \
     }
 
   #define VD_API_OBJ(VKTYPE, DXTYPE)                \

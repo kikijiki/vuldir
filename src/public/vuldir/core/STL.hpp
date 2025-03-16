@@ -85,6 +85,9 @@ using FArr = std::vector<T>;
 template<typename T>
 using Span = std::span<T>;
 
+template<typename T>
+using Init = std::initializer_list<T>;
+
 #endif
 
 } // namespace vd

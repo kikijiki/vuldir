@@ -266,9 +266,13 @@ static Arr<u8> ZLibDeflate(Span<u8 const> inData, u64 sizeHint = 0u)
 static Arr<u8> PngReconstruct(
   Span<u8 const> data, UInt2 size, u32 channelCount, u32 bitsPerChannel)
 {
-  u32 bytesPerPixel = bitsPerChannel * channelCount / 8u;
-  u32 scanlineSize  = size[0] * bytesPerPixel;
-  u32 outputSize    = size[1] * scanlineSize;
+  // Calculate packed scanline size in bytes.
+  u32 scanlineSize =
+    (size[0] * bitsPerChannel * channelCount + 7u) / 8u;
+  // For filtering operations, need at least 1 byte per pixel.
+  u32 bytesPerPixel =
+    std::max(1u, (bitsPerChannel * channelCount + 7u) / 8u);
+  u32 outputSize = size[1] * scanlineSize;
 
   ByteIStream inData(data);
   ByteOStream outData(outputSize);
@@ -533,12 +537,11 @@ DataReader::readPng(std::istream& src, const ImageOptions& options)
   }
 
   if(channelCount == 3u) {
-    channelCount         = 4u;
     u64 bytesPerChannel  = bitsPerChannel / 8u;
-    u64 oldChannelCount  = channelCount;
-    u64 oldBytesPerPixel = oldChannelCount * bytesPerChannel;
+    u64 oldBytesPerPixel = 3u * bytesPerChannel;
 
-    u64 newSize = pixelCount * channelCount * bitsPerChannel / 8u;
+    channelCount = 4u;
+    u64 newSize  = pixelCount * channelCount * bitsPerChannel / 8u;
 
     Arr<u8> buffer;
     buffer.reserve(newSize);

@@ -8,7 +8,7 @@
 
 #ifndef VD_LOG_LEVEL
   #if defined(DEBUG) || defined(_DEBUG)
-    #define VD_LOG_LEVEL 3
+    #define VD_LOG_LEVEL 4
   #else
     #define VD_LOG_LEVEL 1
   #endif

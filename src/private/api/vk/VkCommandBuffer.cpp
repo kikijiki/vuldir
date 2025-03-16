@@ -128,13 +128,13 @@ void CommandBuffer::BeginRendering(
       vd::getVkDepth(depthStencil->view->format) !=
       VK_FORMAT_UNDEFINED) {
       vkDepthAtt            = toVk(*depthStencil);
-      info.pDepthAttachment = &vkStencilAtt;
+      info.pDepthAttachment = &vkDepthAtt;
     }
     if(
       vd::getVkStencil(depthStencil->view->format) !=
       VK_FORMAT_UNDEFINED) {
-      vkStencilAtt          = toVk(*depthStencil);
-      info.pDepthAttachment = &vkStencilAtt;
+      vkStencilAtt            = toVk(*depthStencil);
+      info.pStencilAttachment = &vkStencilAtt;
     }
   }
 
@@ -167,6 +167,16 @@ void CommandBuffer::SetScissor(const Rect& rect)
   m_renderArea = vkRect;
 }
 
+void CommandBuffer::BindIndexBuffer(
+  const Buffer& buffer, IndexType indexType, u64 offset)
+{
+  VD_MARKER_SCOPED();
+
+  const auto vkIndexType = convert(indexType);
+  m_device.api().CmdBindIndexBuffer(
+    m_handle, buffer.GetHandle(), offset, vkIndexType);
+}
+
 void CommandBuffer::Draw(
   u32 vertexCount, u32 instanceCount, u32 vertexOffset,
   u32 instanceOffset)
@@ -190,104 +200,112 @@ void CommandBuffer::DrawIndexed(
 
 void CommandBuffer::AddBarrier()
 {
-  VkMemoryBarrier bar{
-    .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-    .pNext = nullptr,
+  VkMemoryBarrier2 bar{
+    .sType        = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+    .pNext        = nullptr,
+    .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
     .srcAccessMask =
-      VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+      VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
+    .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
     .dstAccessMask =
-      VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_SHADER_READ_BIT};
+      VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT};
 
   m_barriers.memoryBarriers.push_back(bar);
 }
 
 void CommandBuffer::AddBarrier(Buffer& res, ResourceState dstState)
 {
+  AddBarrier(
+    res, dstState, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
+}
+
+void CommandBuffer::AddBarrier(
+  Buffer& res, ResourceState dstState, uint32_t srcQueueFamily,
+  uint32_t dstQueueFamily)
+{
   const auto srcState = res.GetState();
+  if(srcState == dstState && srcQueueFamily == dstQueueFamily) return;
 
-  if(srcState == dstState) return;
-
-  VkBufferMemoryBarrier bar{
-    .sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+  VkBufferMemoryBarrier2 bar{
+    .sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
     .pNext               = nullptr,
-    .srcAccessMask       = convert(srcState),
-    .dstAccessMask       = convert(dstState),
-    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+    .srcStageMask        = toPipelineStage2(srcState),
+    .srcAccessMask       = toAccessFlags2(srcState),
+    .dstStageMask        = toPipelineStage2(dstState),
+    .dstAccessMask       = toAccessFlags2(dstState),
+    .srcQueueFamilyIndex = srcQueueFamily,
+    .dstQueueFamilyIndex = dstQueueFamily,
     .buffer              = res.GetHandle(),
     .offset              = 0u,
     .size                = VK_WHOLE_SIZE};
 
-  if(
-    srcState == ResourceState::CopySrc ||
-    srcState == ResourceState::CopyDst)
-    m_barriers.srcStage |= VK_PIPELINE_STAGE_TRANSFER_BIT;
-
-  if(
-    dstState == ResourceState::CopySrc ||
-    dstState == ResourceState::CopyDst)
-    m_barriers.dstStage |= VK_PIPELINE_STAGE_TRANSFER_BIT;
-
   m_barriers.buffers.push_back(&res);
   m_barriers.bufferStates.push_back(dstState);
   m_barriers.bufferBarriers.push_back(bar);
+
+  res.SetState(dstState);
 }
 
 void CommandBuffer::AddBarrier(Image& res, ResourceState dstState)
 {
+  AddBarrier(
+    res, dstState, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
+}
+
+void CommandBuffer::AddBarrier(
+  Image& res, ResourceState dstState, uint32_t srcQueueFamily,
+  uint32_t dstQueueFamily)
+{
   const auto srcState = res.GetState();
 
-  VkImageMemoryBarrier bar{
-    .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+  if(srcState == dstState && srcQueueFamily == dstQueueFamily) return;
+
+  VkImageMemoryBarrier2 bar{
+    .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
     .pNext               = nullptr,
-    .srcAccessMask       = convert(srcState),
-    .dstAccessMask       = convert(dstState),
+    .srcStageMask        = toPipelineStage2(srcState),
+    .srcAccessMask       = toAccessFlags2(srcState),
+    .dstStageMask        = toPipelineStage2(dstState),
+    .dstAccessMask       = toAccessFlags2(dstState),
     .oldLayout           = getVkImageLayout(srcState),
     .newLayout           = getVkImageLayout(dstState),
-    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-    .image               = res.GetHandle()};
-
-  // TODO:
-  bar.subresourceRange.baseArrayLayer = 0;
-  bar.subresourceRange.layerCount     = VK_REMAINING_ARRAY_LAYERS;
-  bar.subresourceRange.baseMipLevel   = 0;
-  bar.subresourceRange.levelCount     = VK_REMAINING_MIP_LEVELS;
-  bar.subresourceRange.aspectMask = getVkAspectFlags(res.GetFormat());
-
-  if(
-    srcState == ResourceState::CopySrc ||
-    srcState == ResourceState::CopyDst)
-    m_barriers.srcStage |= VK_PIPELINE_STAGE_TRANSFER_BIT;
-
-  if(
-    dstState == ResourceState::CopySrc ||
-    dstState == ResourceState::CopyDst)
-    m_barriers.dstStage |= VK_PIPELINE_STAGE_TRANSFER_BIT;
+    .srcQueueFamilyIndex = srcQueueFamily,
+    .dstQueueFamilyIndex = dstQueueFamily,
+    .image               = res.GetHandle(),
+    .subresourceRange    = {
+         .aspectMask     = getVkAspectFlags(res.GetFormat()),
+         .baseMipLevel   = 0,
+         .levelCount     = VK_REMAINING_MIP_LEVELS,
+         .baseArrayLayer = 0,
+         .layerCount     = VK_REMAINING_ARRAY_LAYERS}};
 
   m_barriers.images.push_back(&res);
   m_barriers.imageStates.push_back(dstState);
   m_barriers.imageBarriers.push_back(bar);
+
+  // State is updated immediately because this is used when
+  // queueing commands to the command buffer.
+  // It is just for bookkeeping, it will match the state in the
+  // resource after the command buffer is submitted.
+  res.SetState(dstState);
 }
 
 void CommandBuffer::FlushBarriers()
 {
-  if(m_barriers.srcStage == VK_PIPELINE_STAGE_NONE_KHR)
-    m_barriers.srcStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-  if(m_barriers.dstStage == VK_PIPELINE_STAGE_NONE_KHR)
-    m_barriers.dstStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+  VkDependencyInfo dependencyInfo{
+    .sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+    .pNext                    = nullptr,
+    .dependencyFlags          = 0,
+    .memoryBarrierCount       = vd::size32(m_barriers.memoryBarriers),
+    .pMemoryBarriers          = std::data(m_barriers.memoryBarriers),
+    .bufferMemoryBarrierCount = vd::size32(m_barriers.bufferBarriers),
+    .pBufferMemoryBarriers    = std::data(m_barriers.bufferBarriers),
+    .imageMemoryBarrierCount  = vd::size32(m_barriers.imageBarriers),
+    .pImageMemoryBarriers     = std::data(m_barriers.imageBarriers)};
 
-  m_device.api().CmdPipelineBarrier(
-    m_handle, m_barriers.srcStage, m_barriers.dstStage, 0u,
-    vd::size32(m_barriers.memoryBarriers),
-    std::data(m_barriers.memoryBarriers),
-    vd::size32(m_barriers.bufferBarriers),
-    std::data(m_barriers.bufferBarriers),
-    vd::size32(m_barriers.imageBarriers),
-    std::data(m_barriers.imageBarriers));
+  m_device.api().CmdPipelineBarrier2(m_handle, &dependencyInfo);
 
-  m_barriers.srcStage = VK_PIPELINE_STAGE_NONE_KHR;
-  m_barriers.dstStage = VK_PIPELINE_STAGE_NONE_KHR;
+  // Reset barriers
   m_barriers.memoryBarriers.clear();
   m_barriers.buffers.clear();
   m_barriers.bufferStates.clear();
@@ -295,11 +313,6 @@ void CommandBuffer::FlushBarriers()
   m_barriers.images.clear();
   m_barriers.imageStates.clear();
   m_barriers.imageBarriers.clear();
-}
-
-void CommandBuffer::Copy(const Buffer& src, Buffer& dst)
-{
-  Copy(src, dst, 0u, 0u, src.GetSize());
 }
 
 void CommandBuffer::Copy(
@@ -326,11 +339,22 @@ void CommandBuffer::Copy(
     return;
   }
 
-  VkBufferCopy copyDesc{
-    .srcOffset = srcOffset, .dstOffset = dstOffset, .size = size};
+  VkBufferCopy2 region{
+    .sType     = VK_STRUCTURE_TYPE_BUFFER_COPY_2,
+    .pNext     = nullptr,
+    .srcOffset = srcOffset,
+    .dstOffset = dstOffset,
+    .size      = size};
 
-  m_device.api().CmdCopyBuffer(
-    m_handle, src.GetHandle(), dst.GetHandle(), 1u, &copyDesc);
+  VkCopyBufferInfo2 desc{
+    .sType       = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+    .pNext       = nullptr,
+    .srcBuffer   = src.GetHandle(),
+    .dstBuffer   = dst.GetHandle(),
+    .regionCount = 1u,
+    .pRegions    = &region};
+
+  m_device.api().CmdCopyBuffer2(m_handle, &desc);
 }
 
 void CommandBuffer::Copy(
@@ -351,7 +375,9 @@ void CommandBuffer::Copy(
     .baseArrayLayer = layer,
     .layerCount     = 1u};
 
-  VkBufferImageCopy copyDesc{
+  VkBufferImageCopy2 copyDesc{
+    .sType             = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
+    .pNext             = nullptr,
     .bufferOffset      = offset,
     .bufferRowLength   = 0u,
     .bufferImageHeight = 0u,
@@ -359,9 +385,16 @@ void CommandBuffer::Copy(
     .imageOffset       = {0u, 0u, 0u},
     .imageExtent       = toVkExtent3D(extent)};
 
-  m_device.api().CmdCopyBufferToImage(
-    m_handle, src.GetHandle(), dst.GetHandle(),
-    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1u, &copyDesc);
+  VkCopyBufferToImageInfo2 copyInfo{
+    .sType          = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2,
+    .pNext          = nullptr,
+    .srcBuffer      = src.GetHandle(),
+    .dstImage       = dst.GetHandle(),
+    .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+    .regionCount    = 1u,
+    .pRegions       = &copyDesc};
+
+  m_device.api().CmdCopyBufferToImage2(m_handle, &copyInfo);
 }
 
 // void CommandBuffer::Copy(Buffer& src, Image& dst)

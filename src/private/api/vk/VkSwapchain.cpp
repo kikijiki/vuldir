@@ -34,19 +34,19 @@ Image& Swapchain::AcquireNextImage(bool wait)
 {
   auto waitFence = wait ? m_waitFence->GetFenceHandle() : nullptr;
 
-  VDLogV(
-    "Acquiring next swapchain image (wait: %s)",
-    wait ? "true" : "false");
-  VDLogV("- Signals %s", GetAcquireFence().GetName().c_str());
-  if(waitFence) {
-    VDLogV("- Signals %s", m_waitFence->GetName().c_str());
-  }
+  ///VDLogV(
+  ///  "Acquiring next swapchain image (wait: %s)",
+  ///  wait ? "true" : "false");
+  ///VDLogV("- Signals %s", GetAcquireFence().GetName().c_str());
+  ///if(waitFence) {
+  ///  VDLogV("- Signals %s", m_waitFence->GetName().c_str());
+  ///}
 
   VDVkTry(m_device.api().AcquireNextImageKHR(
     m_handle, MaxU64, GetAcquireFence().GetSemaphoreHandle(), waitFence,
     &m_imageIndex));
 
-  VDLogV("Acquired image index %u", m_imageIndex);
+  //VDLogV("Acquired image index %u", m_imageIndex);
 
   if(wait) {
     m_waitFence->Wait(MaxU64);
@@ -77,8 +77,8 @@ void Swapchain::Present()
     .pImageIndices      = &m_imageIndex,
     .pResults           = &result};
 
-  VDLogV("Presenting swapchain image");
-  VDLogV("- Waits %s", GetReleaseFence().GetName().c_str());
+  //VDLogV("Presenting swapchain image");
+  //VDLogV("- Waits %s", GetReleaseFence().GetName().c_str());
 
   VDVkTry(m_device.api().QueuePresentKHR(
     m_device.GetQueueHandle(QueueType::Graphics), &info));

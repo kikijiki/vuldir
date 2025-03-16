@@ -43,7 +43,7 @@ Device::~Device()
 }
 
 void Device::Submit(
-  Span<CommandBuffer*> cmds, Span<Fence*> waits, Span<Fence*> signals,
+  Arr<CommandBuffer*> cmds, Arr<Fence*> waits, Arr<Fence*> signals,
   Fence* submitFence, SwapchainDep swapchainDep)
 {
   if(cmds.size() == 0u) return;
@@ -99,6 +99,7 @@ bool Device::Wait(QueueType queue, Fence& fence, u64 value) const
 
 bool Device::Signal(QueueType queue, Fence& fence)
 {
+  fence.Step();
   return SUCCEEDED(GetQueueHandle(queue).Signal(
     &fence.GetHandle(), fence.GetTarget()));
 }

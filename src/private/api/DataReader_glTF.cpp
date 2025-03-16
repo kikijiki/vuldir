@@ -13,7 +13,7 @@ static bool IsDataURI(Strv uri)
 static Arr<u8> DecodeDataURI(Strv uri)
 {
   const char* dataStartTag = ";base64,";
-  auto        dataStart    = uri.find_first_of(dataStartTag);
+  auto        dataStart    = uri.find(dataStartTag);
   if(dataStart == Strv::npos) return {};
   else
     return decodeBase64(uri.substr(dataStart + strlen(dataStartTag)));

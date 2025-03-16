@@ -55,9 +55,9 @@ public:
 
   const Str& GetName() const { return m_name; }
 
-  Opt<u64> GetValue() const;
-  u64      GetTarget() const { return m_target; }
-  u64      Step(const u64 step = 1u)
+  u64 GetValue() const;
+  u64 GetTarget() const { return m_target; }
+  u64 Step(const u64 step = 1u)
   {
     if(m_type != Type::Timeline)
       throw std::runtime_error{"Fence is not a timeline fence"};

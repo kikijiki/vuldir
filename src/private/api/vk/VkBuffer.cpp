@@ -14,9 +14,16 @@ Buffer::Buffer(Device& device, const Desc& desc):
   m_handle{}
 {
   VkBufferCreateInfo ci{};
-  ci.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-  ci.size        = desc.size;
+  ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  ci.size  = desc.size;
+
   ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  const auto queueFamily = m_device.GetQueueFamily(
+    desc.isStaging ? QueueType::Copy : QueueType::Graphics);
+
+  ci.queueFamilyIndexCount = 1;
+  ci.pQueueFamilyIndices   = &queueFamily;
 
   ci.usage |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
   ci.usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;

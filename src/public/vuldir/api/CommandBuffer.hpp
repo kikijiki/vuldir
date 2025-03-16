@@ -75,6 +75,8 @@ public:
 
   void SetViewport(const Viewport& viewport);
   void SetScissor(const Rect& rect);
+  void BindIndexBuffer(
+    const Buffer& buffer, IndexType indexType, u64 offset = 0u);
 
   void Draw(
     u32 vertexCount, u32 instanceCount = 1u, u32 vertexOffset = 0u,
@@ -86,9 +88,18 @@ public:
   void AddBarrier();
   void AddBarrier(Buffer& res, ResourceState dstState);
   void AddBarrier(Image& res, ResourceState dstState);
+
+#ifdef VD_API_VK
+  void AddBarrier(
+    Buffer& res, ResourceState dstState, uint32_t srcQueue,
+    uint32_t dstQueue);
+  void AddBarrier(
+    Image& res, ResourceState dstState, uint32_t srcQueue,
+    uint32_t dstQueue);
+#endif
+
   void FlushBarriers();
 
-  void Copy(const Buffer& src, Buffer& dst);
   void Copy(
     const Buffer& src, Buffer& dst, u64 srcOffset, u64 dstOffset,
     u64 size);
@@ -101,18 +112,15 @@ public:
 private:
   struct Barriers {
 #ifdef VD_API_VK
-    VkPipelineStageFlags srcStage;
-    VkPipelineStageFlags dstStage;
+    Arr<VkMemoryBarrier2> memoryBarriers;
 
-    Arr<VkMemoryBarrier> memoryBarriers;
+    Arr<Buffer*>                buffers;
+    Arr<ResourceState>          bufferStates;
+    Arr<VkBufferMemoryBarrier2> bufferBarriers;
 
-    Arr<const Buffer*>         buffers;
-    Arr<ResourceState>         bufferStates;
-    Arr<VkBufferMemoryBarrier> bufferBarriers;
-
-    Arr<const Image*>         images;
-    Arr<ResourceState>        imageStates;
-    Arr<VkImageMemoryBarrier> imageBarriers;
+    Arr<Image*>                images;
+    Arr<ResourceState>         imageStates;
+    Arr<VkImageMemoryBarrier2> imageBarriers;
 #elif VD_API_DX
     using Resource = Var<std::monostate, Buffer*, Image*>;
     Arr<Resource>               resources;

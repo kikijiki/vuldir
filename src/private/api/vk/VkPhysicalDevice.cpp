@@ -138,6 +138,7 @@ bool PhysicalDevice::HasRequiredFeatures(
   }
 
   return m_features.timeline.timelineSemaphore == VK_TRUE &&
+         m_features.synchronization2.synchronization2 == VK_TRUE &&
          m_features.dynamicRendering.dynamicRendering == VK_TRUE &&
          m_features.descriptorIndexing
              .shaderSampledImageArrayNonUniformIndexing == VK_TRUE &&

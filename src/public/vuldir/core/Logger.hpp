@@ -103,11 +103,11 @@ enum class LogLevel { None, Error, Warning, Info, Verbose };
 #endif
 
 #if VD_LOG_LEVEL >= 4
-  #define VDLogV(...)                                               \
-    {                                                               \
-      printf("[VRB] %s(%.04u): ", GetFilename(__FILE__), __LINE__); \
-      printf(__VA_ARGS__);                                          \
-      printf("\n");                                                 \
+  #define VDLogV(...)       \
+    {                       \
+      VD_LOG_COLOR_INFO();  \
+      VDLogTag(VRB);        \
+      PrintLn(__VA_ARGS__); \
     }
   #define VdCheckV(condition, ...)             \
     {                                          \

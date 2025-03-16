@@ -5,6 +5,7 @@
 #include "vuldir/api/Image.hpp"
 #include "vuldir/api/Pipeline.hpp"
 #include "vuldir/api/dx/DxUti.hpp"
+#include "vuldir/core/Uti.hpp"
 
 using namespace vd;
 
@@ -54,8 +55,10 @@ void CommandBuffer::Reset(bool resetPool)
 
   if(m_state != State::Closed) return;
 
+  if(resetPool) m_pool.Reset();
+
   m_handle->Reset(m_pool.handle.Get(), nullptr);
-  if(resetPool) m_pool.Reset(); // Move after command list reset
+
   m_state = State::Ready;
 }
 
@@ -167,6 +170,20 @@ void CommandBuffer::SetScissor(const Rect& rect)
   m_handle->RSSetScissorRects(1, &dxRect);
 }
 
+void CommandBuffer::BindIndexBuffer(
+  const Buffer& buffer, IndexType indexType, u64 offset)
+{
+  VD_MARKER_SCOPED();
+
+  D3D12_INDEX_BUFFER_VIEW view{
+    .BufferLocation =
+      buffer.GetHandle()->GetGPUVirtualAddress() + offset,
+    .SizeInBytes = static_cast<u32>(buffer.GetSize()),
+    .Format      = convert(indexType)};
+
+  m_handle->IASetIndexBuffer(&view);
+}
+
 void CommandBuffer::Draw(
   u32 vertexCount, u32 instanceCount, u32 vertexOffset,
   u32 instanceOffset)
@@ -274,14 +291,10 @@ void CommandBuffer::FlushBarriers()
     }
   }
 
+  // Reset barriers.
   m_barriers.resources.clear();
   m_barriers.states.clear();
   m_barriers.barriers.clear();
-}
-
-void CommandBuffer::Copy(const Buffer& src, Buffer& dst)
-{
-  Copy(src, dst, 0u, 0u, src.GetSize());
 }
 
 void CommandBuffer::Copy(
@@ -318,17 +331,27 @@ void CommandBuffer::Copy(
 void CommandBuffer::Copy(
   const Buffer& src, Image& dst, u64 offset, u32 mip, u32 layer)
 {
+  const auto width  = dst.GetDesc().extent[0] >> mip;
+  const auto height = dst.GetDesc().extent[1] >> mip;
+  const auto depth  = dst.GetDesc().extent[2];
+  const auto format = dst.GetDesc().format;
+
+  // Calculate row pitch aligned to D3D12 requirements (256 bytes)
+  const auto formatSize = getFormatSize(format);
+  const auto rowPitch   = alignUp(
+    width * formatSize, (u32)D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
+
   D3D12_TEXTURE_COPY_LOCATION srcLoc{
     .pResource       = src.GetHandle(),
     .Type            = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
     .PlacedFootprint = {
       .Offset    = offset,
       .Footprint = {
-        .Format   = convert(dst.GetFormat()),
-        .Width    = dst.GetDesc().extent[0],
-        .Height   = dst.GetDesc().extent[1],
-        .Depth    = dst.GetDesc().extent[2],
-        .RowPitch = 0u,
+        .Format   = convert(format),
+        .Width    = width,
+        .Height   = height,
+        .Depth    = depth,
+        .RowPitch = rowPitch,
       }}};
 
   D3D12_TEXTURE_COPY_LOCATION dstLoc{
