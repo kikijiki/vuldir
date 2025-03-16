@@ -9,7 +9,7 @@ It does not use any third-party libraries, so stuff like PNG/glTF loading, memor
 
 ## Does it work?
 
-I worked on this in my spare time to learn how to use Vulkan and DX12, so it's not really production-ready. I got to the point it was rendering a glTF model, then started a big refactoring and never really finished so while currently it builds fine, it's not working properly.
+I worked on this in my spare time to learn how to use Vulkan and DX12, so it's not really production-ready. It can somewhat load a simple glTF model and render it with both APIs.
 
 ## Build
 
