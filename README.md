@@ -34,7 +34,7 @@ Pick your CMake configuration:
 ### Bindings
 
 Use bindless for everything (ok with Vulkan 1.2 without any extension).
-All the pipelines use the same [layout/signature](src\shaders\vuldir\Layout.hlsli).
+All the pipelines use the same [layout/signature](src/shaders/vuldir/Layout.hlsli).
 
 Basic model:
 
