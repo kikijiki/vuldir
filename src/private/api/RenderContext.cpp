@@ -56,7 +56,7 @@ bool RenderContext::Write(Buffer& buffer, Span<u8 const> data)
   if(buffer.GetMemoryType() != MemoryType::Main)
     return buffer.Write(data);
 
-  auto& stagingBuffer = getStagingBuffer(std::size(data));
+  auto& stagingBuffer = getStagingBuffer(size);
   if(!stagingBuffer.Write(data)) {
     m_freeStagingBuffers.push_back(&stagingBuffer);
     return false;
@@ -135,7 +135,7 @@ bool RenderContext::Write(Image& image, Span<u8 const> data)
   if(image.GetMemoryType() != MemoryType::Main)
     return image.Write(data);
 
-  auto& stagingBuffer = getStagingBuffer(std::size(data));
+  auto& stagingBuffer = getStagingBuffer(size);
   if(!stagingBuffer.Write(data)) {
     m_freeStagingBuffers.push_back(&stagingBuffer);
     return false;
