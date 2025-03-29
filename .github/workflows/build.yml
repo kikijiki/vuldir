@@ -68,6 +68,7 @@ jobs:
 
           update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-$LLVM_MAJOR 60
           update-alternatives --install /usr/bin/clang clang /usr/bin/clang-$LLVM_MAJOR 60
+          update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-$LLVM_MAJOR 60
 
       - name: Configure
         shell: cmake -P {0}
