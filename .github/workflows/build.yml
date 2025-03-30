@@ -6,6 +6,7 @@ jobs:
   build:
     name: ${{ matrix.target }}-${{ matrix.api }}-${{ matrix.config }}
     runs-on: ${{ matrix.target }}
+    if: ${{ !(matrix.api == 'dx' && runner.os != 'Windows') }}
     env:
       CMAKE_VERISION: 3.31.5
       NINJA_VERSION: 1.12.1
@@ -24,6 +25,7 @@ jobs:
 
       - name: Get dependencies (Windows)
         if: ${{ matrix.target != 'self-hosted' && runner.os == 'Windows' }}
+        timeout-minutes: 10
         shell: cmake -P {0}
         run: |
           message(STATUS "Get CMAKE")
@@ -52,6 +54,7 @@ jobs:
 
       - name: Get dependencies (Linux)
         if: ${{ matrix.target != 'self-hosted' && runner.os == 'Linux' }}
+        timeout-minutes: 10
         run: |
           UBUNTU_CODENAME=$(lsb_release -cs)
           LLVM_MAJOR=$(echo $LLVM_VERSION | cut -d. -f1)
