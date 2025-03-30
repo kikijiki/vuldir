@@ -47,7 +47,7 @@ jobs:
           if("${{ matrix.api }}" STREQUAL "vk")
             message(STATUS "Get VKSDK")
             file(DOWNLOAD "https://sdk.lunarg.com/sdk/download/$ENV{VULKAN_VERSION}/windows/VulkanSDK-$ENV{VULKAN_VERSION}-Installer.exe" ./vksdk.exe)
-            execute_process(COMMAND cmd /c start "" /WAIT ./vksdk.exe /S)
+            execute_process(COMMAND cmd /c start "" /WAIT ./vksdk.exe --accept-licenses --confirm-command --root C:\\VulkanSDK\\$ENV{VULKAN_VERSION} install)
             file(APPEND "$ENV{GITHUB_ENV}" "VULKAN_SDK=C:\\VulkanSDK\\$ENV{VULKAN_VERSION}")
             file(APPEND "$ENV{GITHUB_PATH}" "C:\\VulkanSDK\\$ENV{VULKAN_VERSION}\\bin")
           endif()
