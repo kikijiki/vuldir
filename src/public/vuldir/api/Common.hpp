@@ -22,6 +22,12 @@
       return static_cast<VDTYPE>(value);                 \
     }
 
+  #define VD_API_VALUE_CONVERTER_ONEWAY(VDTYPE, VKTYPE, DXTYPE) \
+    inline constexpr VKTYPE convert(VDTYPE value)               \
+    {                                                           \
+      return static_cast<VKTYPE>(value);                        \
+    }
+
   #define VD_API_OBJ(VKTYPE, DXTYPE)        \
   public:                                   \
     VKTYPE GetHandle() { return m_handle; } \
@@ -47,6 +53,12 @@
     inline constexpr VDTYPE convert(DXTYPE value)        \
     {                                                    \
       return static_cast<VDTYPE>(value);                 \
+    }
+
+  #define VD_API_VALUE_CONVERTER_ONEWAY(VDTYPE, VKTYPE, DXTYPE) \
+    inline constexpr DXTYPE convert(VDTYPE value)               \
+    {                                                           \
+      return static_cast<DXTYPE>(value);                        \
     }
 
   #define VD_API_OBJ(VKTYPE, DXTYPE)                \

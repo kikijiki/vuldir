@@ -1,10 +1,10 @@
 #include "Window.hpp"
 
-#include <shellapi.h>
-
 ///////////////////////////////////////////////////////////////////////
 #ifdef VD_OS_WINDOWS
 ///////////////////////////////////////////////////////////////////////
+
+  #include <shellapi.h>
 
 Window::Window(const Str& title, const u32 width, const u32 height)
 {
@@ -144,6 +144,23 @@ Window::_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 #ifdef VD_OS_LINUX
 ///////////////////////////////////////////////////////////////////////
 
+  #include <xcb/xcb.h>
+
+// Helper function to get XCB atoms
+static xcb_atom_t
+get_atom(xcb_connection_t* connection, const char* name)
+{
+  xcb_intern_atom_cookie_t cookie =
+    xcb_intern_atom(connection, 0, strlen(name), name);
+  xcb_intern_atom_reply_t* reply =
+    xcb_intern_atom_reply(connection, cookie, nullptr);
+  if(!reply) return 0;
+
+  xcb_atom_t atom = reply->atom;
+  free(reply);
+  return atom;
+}
+
 Window::Window(const Str& title, const u32 width, const u32 height)
 {
   m_handle.connection = xcb_connect(nullptr, nullptr);
@@ -170,16 +187,16 @@ Window::Window(const Str& title, const u32 width, const u32 height)
     title.c_str());
 
   // Set up XDnD (X11 Drag and Drop)
-  xcb_atom_t atoms[] = {XCB_ATOM_XdndAware,    XCB_ATOM_XdndEnter,
-                        XCB_ATOM_XdndPosition, XCB_ATOM_XdndStatus,
-                        XCB_ATOM_XdndDrop,     XCB_ATOM_XdndLeave,
-                        XCB_ATOM_XdndFinished};
+  // Get the required XDnD atoms
+  xcb_atom_t xdnd_aware = get_atom(m_handle.connection, "XdndAware");
 
   // Register window as XDnD aware (version 5)
   const uint32_t version = 5;
-  xcb_change_property(
-    m_handle.connection, XCB_PROP_MODE_REPLACE, m_handle.window,
-    XCB_ATOM_XdndAware, XCB_ATOM_ATOM, 32, 1, &version);
+  if(xdnd_aware != 0) {
+    xcb_change_property(
+      m_handle.connection, XCB_PROP_MODE_REPLACE, m_handle.window,
+      xdnd_aware, XCB_ATOM_ATOM, 32, 1, &version);
+  }
 
   xcb_map_window(m_handle.connection, m_handle.window);
   xcb_flush(m_handle.connection);
@@ -189,6 +206,15 @@ Window::~Window() { xcb_disconnect(m_handle.connection); }
 
 void Window::Run(const std::function<bool()>& main)
 {
+  // Get only the XDnD atoms we actually use
+  xcb_atom_t xdnd_drop = get_atom(m_handle.connection, "XdndDrop");
+  xcb_atom_t xdnd_finished =
+    get_atom(m_handle.connection, "XdndFinished");
+  xcb_atom_t xdnd_selection =
+    get_atom(m_handle.connection, "XdndSelection");
+  xcb_atom_t text_uri_list =
+    get_atom(m_handle.connection, "text/uri-list");
+
   for(;;) {
     xcb_generic_event_t* event;
     while((event = xcb_poll_for_event(m_handle.connection))) {
@@ -196,16 +222,19 @@ void Window::Run(const std::function<bool()>& main)
         case XCB_CLIENT_MESSAGE: {
           xcb_client_message_event_t* cm =
             (xcb_client_message_event_t*)event;
-          if(cm->type == XCB_ATOM_XdndDrop && OnFileDrop) {
-            xcb_atom_t selection = XCB_ATOM_PRIMARY;
-            xcb_atom_t targets =
-              4; // Typically text/uri-list for drag and drop
+
+          // Handle drag and drop
+          if(
+            cm->type == xdnd_drop && OnFileDrop &&
+            xdnd_selection != 0) {
+            // Request the drag data using the selection mechanism
+            xcb_atom_t selection_target = text_uri_list;
+            xcb_atom_t property         = XCB_ATOM_PRIMARY;
 
             // Send selection request
             xcb_convert_selection(
-              m_handle.connection, m_handle.window,
-              XCB_ATOM_XdndSelection, targets, selection,
-              XCB_CURRENT_TIME);
+              m_handle.connection, m_handle.window, xdnd_selection,
+              selection_target, property, XCB_CURRENT_TIME);
 
             xcb_flush(m_handle.connection);
 
@@ -217,13 +246,10 @@ void Window::Run(const std::function<bool()>& main)
               if(
                 (selection_event->response_type & ~0x80) ==
                 XCB_SELECTION_NOTIFY) {
-                xcb_selection_notify_event_t* notify =
-                  (xcb_selection_notify_event_t*)selection_event;
-
                 // Get the selection data
                 xcb_get_property_cookie_t cookie = xcb_get_property(
-                  m_handle.connection, 0, m_handle.window, selection,
-                  targets, 0,
+                  m_handle.connection, 0, m_handle.window, property,
+                  selection_target, 0,
                   4096 // Maximum size to read
                 );
 
@@ -249,21 +275,24 @@ void Window::Run(const std::function<bool()>& main)
                     uri_list = uri_list.substr(pos + 2);
                   }
 
-                  // Send finished message
-                  xcb_client_message_event_t finished;
-                  memset(&finished, 0, sizeof(finished));
-                  finished.response_type = XCB_CLIENT_MESSAGE;
-                  finished.window = cm->data.data32[0]; // Source window
-                  finished.type   = XCB_ATOM_XdndFinished;
-                  finished.format = 32;
-                  finished.data.data32[0] = m_handle.window;
-                  finished.data.data32[1] = 1; // Success
+                  // Send finished message if we have the atoms
+                  if(xdnd_finished != 0) {
+                    xcb_client_message_event_t finished;
+                    memset(&finished, 0, sizeof(finished));
+                    finished.response_type = XCB_CLIENT_MESSAGE;
+                    finished.window =
+                      cm->data.data32[0]; // Source window
+                    finished.type           = xdnd_finished;
+                    finished.format         = 32;
+                    finished.data.data32[0] = m_handle.window;
+                    finished.data.data32[1] = 1; // Success
 
-                  xcb_send_event(
-                    m_handle.connection, 0, cm->data.data32[0],
-                    XCB_EVENT_MASK_NO_EVENT, (char*)&finished);
+                    xcb_send_event(
+                      m_handle.connection, 0, cm->data.data32[0],
+                      XCB_EVENT_MASK_NO_EVENT, (char*)&finished);
 
-                  xcb_flush(m_handle.connection);
+                    xcb_flush(m_handle.connection);
+                  }
 
                   // Call the callback with collected files
                   if(!files.empty()) { OnFileDrop(files); }

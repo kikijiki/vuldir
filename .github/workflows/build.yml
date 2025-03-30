@@ -7,23 +7,27 @@ jobs:
     name: ${{ matrix.target }}-${{ matrix.api }}-${{ matrix.config }}
     runs-on: ${{ matrix.target }}
     env:
-      CMAKE_VERISION: 3.31.5
+      CMAKE_VERISION: 4.0.0
       NINJA_VERSION: 1.12.1
-      LLVM_VERSION: 19.1.0
-      VULKAN_VERSION: 1.4.304.0
-      VULKAN_APT_VERSION: 1.4.304.0
+      LLVM_VERSION: 20.1.1
+      VULKAN_VERSION: 1.4.309.0
+      VULKAN_APT_VERSION: 1.4.309.0
     strategy:
       fail-fast: false
       matrix:
         api: [vk, dx]
         config: [debug, release]
         target: [windows-latest, ubuntu-latest]
+        exclude:
+          - api: dx
+            target: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Get dependencies (Windows)
         if: ${{ matrix.target != 'self-hosted' && runner.os == 'Windows' }}
+        timeout-minutes: 10
         shell: cmake -P {0}
         run: |
           message(STATUS "Get CMAKE")
@@ -43,7 +47,7 @@ jobs:
           if("${{ matrix.api }}" STREQUAL "vk")
             message(STATUS "Get VKSDK")
             file(DOWNLOAD "https://sdk.lunarg.com/sdk/download/$ENV{VULKAN_VERSION}/windows/VulkanSDK-$ENV{VULKAN_VERSION}-Installer.exe" ./vksdk.exe)
-            execute_process(COMMAND cmd /c start "" /WAIT ./vksdk.exe /S)
+            execute_process(COMMAND cmd /c start "" /WAIT ./vksdk.exe --accept-licenses --confirm-command --root C:\\VulkanSDK\\$ENV{VULKAN_VERSION} install)
             file(APPEND "$ENV{GITHUB_ENV}" "VULKAN_SDK=C:\\VulkanSDK\\$ENV{VULKAN_VERSION}")
             file(APPEND "$ENV{GITHUB_PATH}" "C:\\VulkanSDK\\$ENV{VULKAN_VERSION}\\bin")
           endif()
@@ -52,12 +56,25 @@ jobs:
 
       - name: Get dependencies (Linux)
         if: ${{ matrix.target != 'self-hosted' && runner.os == 'Linux' }}
+        timeout-minutes: 10
         run: |
-          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
           UBUNTU_CODENAME=$(lsb_release -cs)
+          LLVM_MAJOR=$(echo $LLVM_VERSION | cut -d. -f1)
+
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
+
           sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-${UBUNTU_CODENAME}.list http://packages.lunarg.com/vulkan/lunarg-vulkan-${UBUNTU_CODENAME}.list
+          sudo add-apt-repository "deb http://apt.llvm.org/${UBUNTU_CODENAME}/ llvm-toolchain-${UBUNTU_CODENAME}-${LLVM_MAJOR} main"
+
           sudo apt update
-          sudo apt install cmake ninja-build llvm vulkan-sdk
+          sudo apt install cmake ninja-build vulkan-sdk \
+            clang-${LLVM_MAJOR} clangd-${LLVM_MAJOR} clang-tidy-${LLVM_MAJOR} clang-format-${LLVM_MAJOR} clang-tools-${LLVM_MAJOR}
+
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-$LLVM_MAJOR 60
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-$LLVM_MAJOR 60
+          sudo update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-$LLVM_MAJOR 60
+          sudo update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-$LLVM_MAJOR 60
 
       - name: Configure
         shell: cmake -P {0}

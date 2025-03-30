@@ -96,7 +96,9 @@ message(STATUS "API is ${VD_API}")
 if(VD_API STREQUAL "vk")
   list(APPEND VD_PUBLIC_DEFINITIONS VD_API_VK VK_NO_PROTOTYPES)
   if(VD_USE_VULKAN_SDK)
-    find_package(Vulkan REQUIRED COMPONENTS dxc)
+    find_package(Vulkan
+      #REQUIRED COMPONENTS dxc
+    )
   else()
     FetchContent_Declare(
       VulkanHeaders

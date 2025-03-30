@@ -1,8 +1,15 @@
 # VULDIR
 
-[![Check push](https://github.com/kikijiki/Vuldir/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/kikijiki/Vuldir/actions/workflows/build.yml)
+## Build Status
 
-## What is this?
+| API | Config | Windows | Ubuntu |
+|-----|--------|---------|--------|
+| Vulkan | Debug | ![Windows-Vulkan-Debug](https://github.com/kikijiki/Vuldir/actions/workflows/build.yml/badge.svg?branch=master&event=push&jobName=windows-latest-vk-debug) | ![Ubuntu-Vulkan-Debug](https://github.com/kikijiki/Vuldir/actions/workflows/build.yml/badge.svg?branch=master&event=push&jobName=ubuntu-latest-vk-debug) |
+| Vulkan | Release | ![Windows-Vulkan-Release](https://github.com/kikijiki/Vuldir/actions/workflows/build.yml/badge.svg?branch=master&event=push&jobName=windows-latest-vk-release) | ![Ubuntu-Vulkan-Release](https://github.com/kikijiki/Vuldir/actions/workflows/build.yml/badge.svg?branch=master&event=push&jobName=ubuntu-latest-vk-release) |
+| DirectX 12 | Debug | ![Windows-DirectX-Debug](https://github.com/kikijiki/Vuldir/actions/workflows/build.yml/badge.svg?branch=master&event=push&jobName=windows-latest-dx-debug) | N/A |
+| DirectX 12 | Release | ![Windows-DirectX-Release](https://github.com/kikijiki/Vuldir/actions/workflows/build.yml/badge.svg?branch=master&event=push&jobName=windows-latest-dx-release) | N/A |
+
+## What is Vuldir?
 
 Vuldir is a renderer that provides a unified API for Vulkan and DirectX 12.
 It does not use any third-party libraries, so stuff like PNG/glTF loading, memory allocators, math, etc. are implemented from scratch.
