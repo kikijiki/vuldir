@@ -56,20 +56,20 @@ jobs:
           UBUNTU_CODENAME=$(lsb_release -cs)
           LLVM_MAJOR=$(echo $LLVM_VERSION | cut -d. -f1)
 
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
           wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
 
           sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-${UBUNTU_CODENAME}.list http://packages.lunarg.com/vulkan/lunarg-vulkan-${UBUNTU_CODENAME}.list
-          add-apt-repository "deb http://apt.llvm.org/${UBUNTU_CODENAME}/ llvm-toolchain-${UBUNTU_CODENAME}-${LLVM_MAJOR} main"
+          sudo add-apt-repository "deb http://apt.llvm.org/${UBUNTU_CODENAME}/ llvm-toolchain-${UBUNTU_CODENAME}-${LLVM_MAJOR} main"
 
           sudo apt update
           sudo apt install cmake ninja-build vulkan-sdk \
             clang-${LLVM_MAJOR} clangd-${LLVM_MAJOR} clang-tidy-${LLVM_MAJOR} clang-format-${LLVM_MAJOR} clang-tools-${LLVM_MAJOR}
 
-          update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-$LLVM_MAJOR 60
-          update-alternatives --install /usr/bin/clang clang /usr/bin/clang-$LLVM_MAJOR 60
-          update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-$LLVM_MAJOR 60
-          update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-$LLVM_MAJOR 60
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-$LLVM_MAJOR 60
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-$LLVM_MAJOR 60
+          sudo update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-$LLVM_MAJOR 60
+          sudo update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-$LLVM_MAJOR 60
 
       - name: Configure
         shell: cmake -P {0}
