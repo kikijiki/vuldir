@@ -6,7 +6,6 @@ jobs:
   build:
     name: ${{ matrix.target }}-${{ matrix.api }}-${{ matrix.config }}
     runs-on: ${{ matrix.target }}
-    if: ${{ !(matrix.api == 'dx' && runner.os != 'Windows') }}
     env:
       CMAKE_VERISION: 3.31.5
       NINJA_VERSION: 1.12.1
@@ -19,6 +18,9 @@ jobs:
         api: [vk, dx]
         config: [debug, release]
         target: [windows-latest, ubuntu-latest]
+        exclude:
+          - api: dx
+            target: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
