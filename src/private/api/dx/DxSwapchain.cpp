@@ -10,11 +10,11 @@ static bool hasTearingSupport()
   if(SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory4)))) {
     ComPtr<IDXGIFactory5> factory5;
     if(SUCCEEDED(factory4.As(&factory5))) {
-      bool allowTearing = false;
+      BOOL allowTearing = FALSE;
       if(SUCCEEDED(factory5->CheckFeatureSupport(
            DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing,
            sizeof(allowTearing)))) {
-        return allowTearing;
+        return allowTearing == TRUE;
       }
     }
   }
@@ -26,8 +26,9 @@ static UInt2 getSize(HWND hWnd, Opt<UInt2> requestedSize)
 {
   if(requestedSize) { return *requestedSize; }
 
-  RECT clientRect;
-  GetClientRect(hWnd, &clientRect);
+  RECT clientRect{};
+  if(!GetClientRect(hWnd, &clientRect))
+    throw std::runtime_error("Could not query swapchain window size");
   return {
     static_cast<uint32_t>(clientRect.right - clientRect.left),
     static_cast<uint32_t>(clientRect.bottom - clientRect.top)};
@@ -47,6 +48,7 @@ Swapchain::Swapchain(Device& device, const Desc& desc):
   m_swapchainFlags{},
   m_presentFlags{}
 {
+  m_desc.maxFramesInFlight = std::max(1u, m_desc.maxFramesInFlight);
   create();
 }
 
@@ -56,16 +58,19 @@ void Swapchain::Resize(Opt<UInt2> size)
 {
   m_desc.size = size;
 
-  for(auto& fence: m_acquireFences) { fence->Wait(); }
+  for(auto& fence: m_acquireFences) {
+    if(!fence->Wait())
+      throw std::runtime_error("Failed to wait before swapchain resize");
+  }
 
   m_images.clear();
   m_acquireFences.clear();
   m_releaseFences.clear();
 
   auto newSize = getSize(m_desc.window.hWnd, size);
-  m_handle->ResizeBuffers(
+  VDDxTry(m_handle->ResizeBuffers(
     m_imageCount, newSize[0], newSize[1], vd::convert(m_desc.format),
-    hasTearingSupport() ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0);
+    m_swapchainFlags));
 
   DXGI_SWAP_CHAIN_DESC1 desc;
   VDDxTry(m_handle->GetDesc1(&desc));
@@ -75,33 +80,44 @@ void Swapchain::Resize(Opt<UInt2> size)
   for(auto idx = 0u; idx < m_imageCount; ++idx) {
     Image::Desc imgDesc{
       .name        = formatString("Swapchain Image #%u", idx),
+      .usage       = ResourceUsage::RenderTarget,
       .format      = m_desc.format,
       .dimension   = Dimension::e2D,
       .extent      = m_extent,
       .defaultView = ViewType::RTV};
 
-    m_handle->GetBuffer(idx, IID_PPV_ARGS(&imgDesc.handle));
+    VDDxTry(m_handle->GetBuffer(idx, IID_PPV_ARGS(&imgDesc.handle)));
     auto image = std::make_unique<Image>(m_device, imgDesc);
     m_images.push_back(std::move(image));
   }
 
+  for(u32 idx = 0u; idx < m_desc.maxFramesInFlight; ++idx) {
+    m_acquireFences.push_back(
+      std::make_unique<Fence>(
+        m_device, formatString("Swapchain Acquire Fence #%u", idx),
+        Fence::Type::Timeline));
+  }
   for(u32 idx = 0u; idx < m_imageCount; ++idx) {
-    m_acquireFences.push_back(std::make_unique<Fence>(
-      m_device, formatString("Swapchain Acquire Fence #%u", idx),
-      Fence::Type::Timeline));
-    m_releaseFences.push_back(std::make_unique<Fence>(
-      m_device, formatString("Swapchain Release Fence #%u", idx),
-      Fence::Type::Timeline));
+    m_releaseFences.push_back(
+      std::make_unique<Fence>(
+        m_device, formatString("Swapchain Release Fence #%u", idx),
+        Fence::Type::Timeline));
   }
 }
 
-Image& Swapchain::AcquireNextImage(bool wait)
+bool Swapchain::IsSurfaceExtentStale() const { return false; }
+
+Image* Swapchain::AcquireNextImage(bool wait)
 {
-  if(wait) { GetAcquireFence().Wait(); }
+  if(wait && !GetAcquireFence().Wait())
+    throw std::runtime_error("Failed to wait for acquired image");
 
   m_imageIndex = m_handle->GetCurrentBackBufferIndex();
-  GetReleaseFence().Step();
-  return *m_images[m_imageIndex];
+  // Wait for the previous submit that wrote this image before recording
+  // into it again. Present no longer host-waits the release fence.
+  if(!GetReleaseFence().Wait())
+    throw std::runtime_error("Failed to wait for presented image");
+  return m_images[m_imageIndex].get();
 }
 
 u32 Swapchain::NextFrame()
@@ -112,12 +128,15 @@ u32 Swapchain::NextFrame()
 
 void Swapchain::Present()
 {
-  m_handle->Present(m_desc.vsync ? 1 : 0, m_presentFlags);
+  // Present immediately after Submit. Ordering vs GPU write completion is
+  // enforced when this image is next acquired (release fence wait above).
+  auto& queue = m_device.m_queues[enumValue(QueueType::Graphics)];
+  std::scoped_lock queueLock(*queue.mutex);
+  const UINT presentFlags = m_desc.vsync ? 0u : m_presentFlags;
+  VDDxTry(m_handle->Present(m_desc.vsync ? 1u : 0u, presentFlags));
 
-  auto& cmd = m_device.GetQueueHandle(QueueType::Graphics);
-  GetAcquireFence().Step();
-  cmd.Signal(
-    &GetAcquireFence().GetHandle(), GetAcquireFence().GetTarget());
+  if(!m_device.Signal(QueueType::Graphics, GetAcquireFence()))
+    throw std::runtime_error("Failed to signal presented frame");
 }
 
 void Swapchain::create()
@@ -166,7 +185,6 @@ void Swapchain::create()
   m_imageCount = swapChainDesc.BufferCount;
 
   Resize(m_desc.size);
-  //m_handle->Release(); // GetBuffer adds 1 the first time?
 }
 
 void Swapchain::destroy()

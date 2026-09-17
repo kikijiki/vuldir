@@ -10,6 +10,7 @@ struct StaticSampler {
   u32                binding;
   SamplerFilter      filter;
   SamplerAddressMode mode;
+  bool               anisotropy;
 };
 
 struct BindlessSlot {
@@ -21,12 +22,12 @@ struct BindlessSlot {
 static constexpr u64 PushConstantsSize = 16u;
 
 static constexpr StaticSampler StaticSamplers[] = {
-  {0u, SamplerFilter::Nearest, SamplerAddressMode::Repeat},
-  {1u, SamplerFilter::Linear, SamplerAddressMode::Repeat},
-  {2u, SamplerFilter::Nearest, SamplerAddressMode::Mirror},
-  {3u, SamplerFilter::Linear, SamplerAddressMode::Mirror},
-  {4u, SamplerFilter::Nearest, SamplerAddressMode::Clamp},
-  {5u, SamplerFilter::Linear, SamplerAddressMode::Clamp},
+  {0u, SamplerFilter::Nearest, SamplerAddressMode::Repeat, false},
+  {1u, SamplerFilter::Linear, SamplerAddressMode::Repeat, true},
+  {2u, SamplerFilter::Nearest, SamplerAddressMode::Mirror, false},
+  {3u, SamplerFilter::Linear, SamplerAddressMode::Mirror, true},
+  {4u, SamplerFilter::Nearest, SamplerAddressMode::Clamp, false},
+  {5u, SamplerFilter::Linear, SamplerAddressMode::Clamp, true},
 };
 
 static constexpr BindlessSlot BindlessSlots[] = {
@@ -52,11 +53,12 @@ struct Binder::Heap {
 
   Heap(
     Device& device_, VkDescriptorSet set_, VkDescriptorType type_,
-    u32 size, u32 binding_, const char* name_):
+    u32 size_, u32 binding_, const char* name_):
     device{device_},
     set{set_},
     type{type_},
     binding{binding_},
+    size{size_},
     name{name_}
   {
     freeList.reserve(size);
@@ -74,6 +76,11 @@ struct Binder::Heap {
   {
     std::scoped_lock lock(mutex);
 
+    if(freeList.empty()) {
+      throw std::runtime_error(
+        formatString("Descriptor heap '%s' exhausted", name));
+    }
+
     const auto index = freeList.back();
     freeList.pop_back();
 
@@ -85,13 +92,23 @@ struct Binder::Heap {
     std::scoped_lock lock(mutex);
     freeList.push_back(idx);
   }
+
+  Binder::Stats stats()
+  {
+    std::scoped_lock lock(mutex);
+    return {
+      .allocated = size - static_cast<u32>(freeList.size()),
+      .capacity  = size};
+  }
 };
 
 Binder::Binder(Device& device_, const Desc& desc_):
   m_device{device_},
   m_desc{desc_},
+  m_mutex{},
   m_heaps{},
   m_staticSamplers{},
+  m_descriptorPool{},
   m_descriptorSetLayout{},
   m_descriptorSet{},
   m_pipelineLayout{}
@@ -100,28 +117,61 @@ Binder::Binder(Device& device_, const Desc& desc_):
 
   Arr<VkDescriptorSetLayoutBinding> bindings;
   Arr<VkSampler>                    staticSamplers;
-  Map<VkDescriptorType, u32>        heapSizes = {
-    {VK_DESCRIPTOR_TYPE_SAMPLER,
-            std::min(
-       props->limits.maxDescriptorSetSamplers, m_desc.maxSamplerCount)},
-    {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            std::min(
-       props->limits.maxDescriptorSetStorageBuffers,
-       m_desc.maxDescriptorCount)},
-    {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            std::min(
-       props->limits.maxDescriptorSetSampledImages,
-       m_desc.maxDescriptorCount)},
-    {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            std::min(
-       props->limits.maxDescriptorSetStorageImages,
-       m_desc.maxDescriptorCount)},
-  };
+  const auto& props12 = props.properties12;
+
+  SArr<u32, vd::size32(BindlessSlots)> heapCapacities = {
+    std::min({
+      props12.maxDescriptorSetUpdateAfterBindSamplers,
+      props12.maxPerStageDescriptorUpdateAfterBindSamplers,
+      m_desc.maxSamplerCount}),
+    std::min({
+      props12.maxDescriptorSetUpdateAfterBindStorageBuffers,
+      props12.maxPerStageDescriptorUpdateAfterBindStorageBuffers,
+      m_desc.maxDescriptorCount}),
+    std::min({
+      props12.maxDescriptorSetUpdateAfterBindSampledImages,
+      props12.maxPerStageDescriptorUpdateAfterBindSampledImages,
+      m_desc.maxDescriptorCount}),
+    std::min({
+      props12.maxDescriptorSetUpdateAfterBindStorageImages,
+      props12.maxPerStageDescriptorUpdateAfterBindStorageImages,
+      m_desc.maxDescriptorCount})};
+
+  const u32 resourceLimit = props12.maxPerStageUpdateAfterBindResources;
+  if(
+    resourceLimit < heapCapacities.size() ||
+    std::ranges::any_of(
+      heapCapacities, [](u32 capacity) { return capacity == 0u; })) {
+    throw std::runtime_error(
+      "Insufficient Vulkan update-after-bind descriptor capacity");
+  }
+
+  SArr<u32, vd::size32(BindlessSlots)> allocatedCapacities{};
+  u32 remaining = resourceLimit;
+  for(u32 idx = 0u; idx < allocatedCapacities.size(); ++idx) {
+    const u32 slotsLeft = size32(allocatedCapacities) - idx;
+    const u32 fairShare = remaining / slotsLeft;
+    allocatedCapacities[idx] =
+      std::max(1u, std::min(heapCapacities[idx], fairShare));
+    remaining -= allocatedCapacities[idx];
+  }
+  for(u32 idx = 0u; idx < allocatedCapacities.size(); ++idx) {
+    const u32 extra = std::min(
+      remaining, heapCapacities[idx] - allocatedCapacities[idx]);
+    allocatedCapacities[idx] += extra;
+    remaining -= extra;
+  }
+
+  Map<VkDescriptorType, u32> heapSizes;
+  for(u32 idx = 0u; idx < vd::size32(BindlessSlots); ++idx)
+    heapSizes[BindlessSlots[idx].type] = allocatedCapacities[idx];
 
   { // Descriptor pool
+    // Static samplers also consume SAMPLER descriptors from the pool.
     VkDescriptorPoolSize poolSizes[] = {
       {VK_DESCRIPTOR_TYPE_SAMPLER,
-       heapSizes[VK_DESCRIPTOR_TYPE_SAMPLER]},
+       heapSizes[VK_DESCRIPTOR_TYPE_SAMPLER] +
+         vd::size32(StaticSamplers)},
       {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
        heapSizes[VK_DESCRIPTOR_TYPE_STORAGE_BUFFER]},
       {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
@@ -144,16 +194,29 @@ Binder::Binder(Device& device_, const Desc& desc_):
   // https://gist.github.com/NotAPenguin0/284461ecc81267fa41a7fbc472cd3afe
   // http://chunkstories.xyz/blog/a-note-on-descriptor-indexing/
   Arr<VkDescriptorBindingFlags> bindingFlags;
-  //Arr<u32>                      descriptorCounts;
 
   { // Bindings: Static samplers (binding 0-5)
+    const bool anisotropySupported =
+      props.properties.properties.limits.maxSamplerAnisotropy >= 1.f &&
+      m_device.GetPhysicalDevice().GetFeatures()->samplerAnisotropy;
+    const f32 anisotropyMax = anisotropySupported
+                                ? std::min(
+                                    16.f,
+                                    props.properties.properties.limits
+                                      .maxSamplerAnisotropy)
+                                : 0.f;
+
     for(const auto& sampler: StaticSamplers) {
       Sampler::Desc desc{};
       desc.minFilter = desc.magFilter = desc.mipFilter = sampler.filter;
       desc.u = desc.v = desc.w = sampler.mode;
+      if(sampler.anisotropy && anisotropySupported) {
+        desc.anisotropyEnable = true;
+        desc.anisotropyMax    = anisotropyMax;
+      }
 
       m_staticSamplers.push_back(
-        std::make_unique<Sampler>(m_device, desc));
+        UPtr<Sampler>{new Sampler(m_device, desc, false)});
 
       auto& bnd           = bindings.emplace_back();
       bnd.binding         = sampler.binding;
@@ -164,7 +227,6 @@ Binder::Binder(Device& device_, const Desc& desc_):
         &m_staticSamplers.back()->GetView().handle;
 
       bindingFlags.push_back(0);
-      //descriptorCounts.push_back(1);
     }
   }
 
@@ -174,15 +236,14 @@ Binder::Binder(Device& device_, const Desc& desc_):
 
     bnd.descriptorType     = slot.type;
     bnd.binding            = slot.binding;
-    bnd.descriptorCount    = heapSizes[slot.type] - 1; // TODO Wtf?
+    bnd.descriptorCount    = heapSizes[slot.type];
     bnd.stageFlags         = VK_SHADER_STAGE_ALL;
     bnd.pImmutableSamplers = nullptr;
 
     bindingFlags.push_back(
-      VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT
-      // | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT
+      VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+      VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
     );
-    //descriptorCounts.push_back(bnd.descriptorCount);
   }
 
   { // Descriptor set
@@ -205,15 +266,8 @@ Binder::Binder(Device& device_, const Desc& desc_):
     VDVkTry(m_device.api().CreateDescriptorSetLayout(
       &ci, &m_descriptorSetLayout));
 
-    //VkDescriptorSetVariableDescriptorCountAllocateInfo setCounts = {};
-    //setCounts.sType =
-    //  VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
-    //setCounts.descriptorSetCount = vd::size32(descriptorCounts);
-    //setCounts.pDescriptorCounts  = std::data(descriptorCounts);
-
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    //allocInfo.pNext = &setCounts;
     allocInfo.descriptorPool     = m_descriptorPool;
     allocInfo.descriptorSetCount = 1u;
     allocInfo.pSetLayouts        = &m_descriptorSetLayout;
@@ -224,9 +278,10 @@ Binder::Binder(Device& device_, const Desc& desc_):
 
   // Heaps
   for(auto& slot: BindlessSlots)
-    m_heaps.push_back(std::make_unique<Heap>(
-      m_device, m_descriptorSet, slot.type, heapSizes[slot.type],
-      slot.binding, slot.name));
+    m_heaps.push_back(
+      std::make_unique<Heap>(
+        m_device, m_descriptorSet, slot.type, heapSizes[slot.type],
+        slot.binding, slot.name));
 
   { // Pipeline layout
     VkPipelineLayoutCreateInfo ci{};
@@ -274,6 +329,7 @@ void Binder::Bind(CommandBuffer& cmd, BindPoint bindPoint)
 
 DescriptorBinding Binder::Bind(const Sampler::View& view)
 {
+  std::scoped_lock lock(m_mutex);
   auto& heap = getHeap(DescriptorType::Sampler);
 
   DescriptorBinding binding{};
@@ -301,6 +357,7 @@ DescriptorBinding Binder::Bind(const Sampler::View& view)
 
 DescriptorBinding Binder::Bind(const Buffer::View& view)
 {
+  std::scoped_lock lock(m_mutex);
   auto& heap = getHeap(DescriptorType::StorageBuffer);
 
   DescriptorBinding binding{};
@@ -331,6 +388,7 @@ DescriptorBinding Binder::Bind(const Buffer::View& view)
 
 DescriptorBinding Binder::Bind(const Image::View& view)
 {
+  std::scoped_lock lock(m_mutex);
   DescriptorBinding binding{};
   Heap*             heap = nullptr;
 
@@ -389,6 +447,102 @@ DescriptorBinding Binder::Bind(const Image::View& view)
 }
 
 void Binder::Unbind(const DescriptorBinding& binding)
+{
+  std::scoped_lock lock(m_mutex);
+  if(!binding.IsValid()) return;
+  u32 activeSlots = 0u;
+  for(const auto& [context, slots]: m_frameContexts) {
+    VD_UNUSED(context);
+    for(const auto& slot: slots)
+      if(slot.active) ++activeSlots;
+  }
+  if(activeSlots == 0u) {
+    freeBinding(binding);
+    return;
+  }
+
+  auto pending            = std::make_shared<PendingUnbind>();
+  pending->binding        = binding;
+  pending->remainingSlots = activeSlots;
+  for(auto& [context, slots]: m_frameContexts) {
+    VD_UNUSED(context);
+    for(auto& slot: slots)
+      if(slot.active) slot.pending.push_back(pending);
+  }
+}
+
+Binder::FrameContextId Binder::RegisterFrameContext(u32 slotCount)
+{
+  std::scoped_lock lock(m_mutex);
+  const FrameContextId id = m_nextFrameContext++;
+  m_frameContexts[id].resize(std::max(1u, slotCount));
+  return id;
+}
+
+void Binder::UnregisterFrameContext(FrameContextId context)
+{
+  std::scoped_lock lock(m_mutex);
+  auto it = m_frameContexts.find(context);
+  if(it == m_frameContexts.end()) return;
+  for(u32 slot = 0u; slot < it->second.size(); ++slot)
+    retireSlot(context, slot);
+  m_frameContexts.erase(context);
+}
+
+void Binder::BeginFrame(FrameContextId context, u32 slot)
+{
+  std::scoped_lock lock(m_mutex);
+  auto it = m_frameContexts.find(context);
+  if(it == m_frameContexts.end())
+    throw std::runtime_error("Binder: unknown frame context");
+  auto& frameSlot = it->second[slot % it->second.size()];
+  if(frameSlot.active)
+    throw std::runtime_error("Binder: frame slot is already active");
+  frameSlot.active = true;
+}
+
+void Binder::RetireFrame(FrameContextId context, u32 slot)
+{
+  std::scoped_lock lock(m_mutex);
+  retireSlot(context, slot);
+}
+
+void Binder::FlushDeferred(FrameContextId context)
+{
+  std::scoped_lock lock(m_mutex);
+  auto it = m_frameContexts.find(context);
+  if(it == m_frameContexts.end()) return;
+  for(u32 slot = 0u; slot < it->second.size(); ++slot)
+    retireSlot(context, slot);
+}
+
+void Binder::retireSlot(FrameContextId context, u32 slot)
+{
+  auto it = m_frameContexts.find(context);
+  if(it == m_frameContexts.end()) return;
+  auto& frameSlot = it->second[slot % it->second.size()];
+  if(!frameSlot.active) return;
+
+  frameSlot.active = false;
+  for(auto& pending: frameSlot.pending) {
+    if(--pending->remainingSlots == 0u) freeBinding(pending->binding);
+  }
+  frameSlot.pending.clear();
+}
+
+Binder::Stats Binder::GetStats()
+{
+  std::scoped_lock lock(m_mutex);
+  Stats result{};
+  for(auto& heap: m_heaps) {
+    const auto heapStats = heap->stats();
+    result.allocated += heapStats.allocated;
+    result.capacity += heapStats.capacity;
+  }
+  return result;
+}
+
+void Binder::freeBinding(const DescriptorBinding& binding)
 {
   getHeap(binding.type).free(binding.index);
 }

@@ -14,7 +14,6 @@ struct PC {
   uint4 data;
 };
 
-///////////////////////////////////////////////////////////////////////
 // Default
 
 VD_PUSHCONSTANT ConstantBuffer<PC> pc : register(b0, space0);
@@ -26,7 +25,6 @@ VD_BINDING(3, 0) SamplerState smpLinearMirror  : register(s3, space0);
 VD_BINDING(4, 0) SamplerState smpNearestClamp  : register(s4, space0);
 VD_BINDING(5, 0) SamplerState smpLinearClamp   : register(s5, space0);
 
-///////////////////////////////////////////////////////////////////////
 // Bindless
 
 VD_BINDING(6, 0) SamplerState samplers[] : register(s0, space1);

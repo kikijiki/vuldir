@@ -2,6 +2,7 @@
 #include "vuldir/api/CommandBuffer.hpp"
 #include "vuldir/api/Device.hpp"
 #include "vuldir/api/Pipeline.hpp"
+#include "vuldir/api/PhysicalDevice.hpp"
 #include "vuldir/api/Shader.hpp"
 #include "vuldir/api/vk/VkDispatcher.hpp"
 #include "vuldir/api/vk/VkUti.hpp"
@@ -14,6 +15,106 @@ Pipeline::Pipeline(Device& device, const GraphicsDesc& desc):
   m_desc{desc},
   m_handle{}
 {
+  if(desc.colorFormats.size() > 8u)
+    throw std::invalid_argument(
+      "Graphics pipeline cannot have more than eight color attachments");
+  if(desc.blendAttachments.size() != desc.colorFormats.size())
+    throw std::invalid_argument(
+      "Color formats and blend attachments must have matching counts");
+  for(const auto format: desc.colorFormats) {
+    if(
+      format == Format::UNDEFINED ||
+      getFormatAspect(format) != ImageAspect::Color)
+      throw std::invalid_argument("Color attachment format is invalid");
+  }
+  if(
+    desc.depthStencilFormat != Format::UNDEFINED &&
+    getFormatAspect(desc.depthStencilFormat) == ImageAspect::Color)
+    throw std::invalid_argument("Depth attachment format is invalid");
+  if(
+    desc.sampleCount == 0u ||
+    (desc.sampleCount & (desc.sampleCount - 1u)) != 0u ||
+    desc.sampleCount > 64u)
+    throw std::invalid_argument("Pipeline sample count is invalid");
+  if(!std::isfinite(desc.lineWidth) || desc.lineWidth <= 0.f)
+    throw std::invalid_argument("Pipeline line width must be positive");
+  if(desc.conservativeRaster)
+    throw std::invalid_argument(
+      "Vulkan conservative rasterization is not enabled");
+  if(desc.lineAntiAlias)
+    throw std::invalid_argument("Vulkan line antialiasing is not enabled");
+  if(desc.sampleQuality != 0u)
+    throw std::invalid_argument(
+      "Vulkan does not expose multisample quality levels");
+  if(
+    desc.dynamicLineWidth || desc.dynamicDepthBias ||
+    desc.dynamicBlendConstants || desc.dynamicDepthBounds ||
+    desc.dynamicStencilCompareMask || desc.dynamicStencilWriteMask ||
+    desc.dynamicStencilReference)
+    throw std::invalid_argument(
+      "Pipeline requests a dynamic state with no command API setter");
+  if(
+    desc.depthBoundsTestEnable &&
+    (!std::isfinite(desc.depthMinBounds) ||
+     !std::isfinite(desc.depthMaxBounds) || desc.depthMinBounds < 0.f ||
+     desc.depthMaxBounds > 1.f ||
+     desc.depthMinBounds > desc.depthMaxBounds))
+    throw std::invalid_argument("Pipeline depth bounds are invalid");
+  if(
+    !std::isfinite(desc.depthBiasFactor) ||
+    !std::isfinite(desc.depthBiasClamp) ||
+    !std::isfinite(desc.depthBiasSlope))
+    throw std::invalid_argument("Pipeline depth bias is not finite");
+  if(
+    !desc.dynamicViewport &&
+    (!std::isfinite(desc.viewport.offset[0]) ||
+     !std::isfinite(desc.viewport.offset[1]) ||
+     !std::isfinite(desc.viewport.extent[0]) ||
+     !std::isfinite(desc.viewport.extent[1]) ||
+     desc.viewport.extent[0] <= 0.f || desc.viewport.extent[1] == 0.f ||
+     !std::isfinite(desc.viewport.depthExtent[0]) ||
+     !std::isfinite(desc.viewport.depthExtent[1]) ||
+     desc.viewport.depthExtent[0] < 0.f ||
+     desc.viewport.depthExtent[1] > 1.f ||
+     desc.viewport.depthExtent[0] > desc.viewport.depthExtent[1]))
+    throw std::invalid_argument("Static pipeline viewport is invalid");
+  if(
+    !desc.dynamicScissor &&
+    (desc.scissor.extent[0] == 0u || desc.scissor.extent[1] == 0u))
+    throw std::invalid_argument("Static pipeline scissor is empty");
+  const auto& features = m_device.GetPhysicalDevice().GetFeatures();
+  const auto& limits = m_device.GetPhysicalDevice().GetProperties()->limits;
+  const VkSampleCountFlags samples =
+    static_cast<VkSampleCountFlags>(desc.sampleCount);
+  if(
+    !desc.colorFormats.empty() &&
+    (limits.framebufferColorSampleCounts & samples) == 0u)
+    throw std::invalid_argument(
+      "Pipeline color sample count is unsupported");
+  if(
+    desc.depthStencilFormat != Format::UNDEFINED &&
+    (limits.framebufferDepthSampleCounts & samples) == 0u)
+    throw std::invalid_argument(
+      "Pipeline depth sample count is unsupported");
+  if(desc.depthClampEnable && !features->depthClamp)
+    throw std::invalid_argument("Depth clamp is unsupported");
+  if(desc.depthBoundsTestEnable && !features->depthBounds)
+    throw std::invalid_argument("Depth bounds testing is unsupported");
+  if(desc.polygonMode != PolygonMode::Fill && !features->fillModeNonSolid)
+    throw std::invalid_argument("Non-solid polygon modes are unsupported");
+  if(desc.lineWidth != 1.f && !features->wideLines)
+    throw std::invalid_argument("Wide lines are unsupported");
+  if(desc.alphaToOneEnable && !features->alphaToOne)
+    throw std::invalid_argument("Alpha-to-one is unsupported");
+  if(desc.blendLogicOpEnable && !features->logicOp)
+    throw std::invalid_argument("Color logic operations are unsupported");
+  if(!desc.VS)
+    throw std::invalid_argument("Graphics pipeline requires a vertex shader");
+  if(&desc.VS->GetDevice() != &m_device ||
+     (desc.PS && &desc.PS->GetDevice() != &m_device))
+    throw std::invalid_argument(
+      "Pipeline shaders belong to another device");
+
   Arr<VkPipelineShaderStageCreateInfo> stages;
 
   if(desc.VS) {
@@ -96,7 +197,7 @@ Pipeline::Pipeline(Device& device, const GraphicsDesc& desc):
       .srcAlphaBlendFactor = convert(att.srcAlphaBlendFactor),
       .dstAlphaBlendFactor = convert(att.dstAlphaBlendFactor),
       .alphaBlendOp        = convert(att.alphaBlendOp),
-      .colorWriteMask      = 0xFFFFFFFF};
+      .colorWriteMask      = 0u};
 
     if(att.writeR) vkatt.colorWriteMask |= VK_COLOR_COMPONENT_R_BIT;
     if(att.writeG) vkatt.colorWriteMask |= VK_COLOR_COMPONENT_G_BIT;
@@ -181,6 +282,8 @@ Pipeline::Pipeline(Device& device, const GraphicsDesc& desc):
 
   VDVkTry(m_device.api().CreateGraphicsPipelines(
     nullptr, 1u, &ci, &m_handle));
+  releaseShaderRefs();
+  ++m_device.m_pipelineCount;
 }
 
 Pipeline::Pipeline(Device& device, const ComputeDesc& desc):
@@ -189,6 +292,12 @@ Pipeline::Pipeline(Device& device, const ComputeDesc& desc):
   m_desc{desc},
   m_handle{}
 {
+  if(!desc.CS)
+    throw std::invalid_argument("Compute pipeline requires a shader");
+  if(&desc.CS->GetDevice() != &m_device)
+    throw std::invalid_argument(
+      "Pipeline shader belongs to another device");
+
   VkPipelineCreateFlags flags = 0u;
 
   VkPipelineShaderStageCreateInfo stage{
@@ -205,10 +314,13 @@ Pipeline::Pipeline(Device& device, const ComputeDesc& desc):
 
   VDVkTry(
     m_device.api().CreateComputePipelines(nullptr, 1u, &ci, &m_handle));
+  releaseShaderRefs();
+  ++m_device.m_pipelineCount;
 }
 
 Pipeline::~Pipeline()
 {
+  --m_device.m_pipelineCount;
   if(m_handle) {
     m_device.api().DestroyPipeline(m_handle);
     m_handle = nullptr;
@@ -217,9 +329,24 @@ Pipeline::~Pipeline()
 
 void Pipeline::Bind(CommandBuffer& cmd)
 {
+  cmd.requireRecording("Pipeline::Bind");
   VD_MARKER_SCOPED();
 
+  if(&cmd.m_device != &m_device)
+    throw std::invalid_argument(
+      "Pipeline belongs to another device");
+  if(
+    m_bindPoint == BindPoint::Graphics &&
+    cmd.GetQueueType() != QueueType::Graphics)
+    throw std::invalid_argument(
+      "Graphics pipelines require a graphics command buffer");
+  if(cmd.GetQueueType() == QueueType::Copy)
+    throw std::invalid_argument(
+      "Pipelines cannot be bound to a copy command buffer");
+
   m_device.GetBinder().Bind(cmd, m_bindPoint);
+  cmd.m_bindPoint     = m_bindPoint;
+  cmd.m_pipelineBound = true;
   m_device.api().CmdBindPipeline(
     cmd.GetHandle(), convert(m_bindPoint), m_handle);
 }

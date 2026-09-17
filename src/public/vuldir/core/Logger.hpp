@@ -26,53 +26,41 @@ inline const char* GetFilename(const char* path)
   return path;
 }
 
+inline void PrintFormatted(bool newline, const char* fmt, va_list args)
+{
+  va_list sizeArgs;
+  va_copy(sizeArgs, args);
+  const int required = std::vsnprintf(nullptr, 0u, fmt, sizeArgs);
+  va_end(sizeArgs);
+  if(required < 0) return;
+
+  std::vector<char> buffer(static_cast<size_t>(required) + 1u);
+  va_list           writeArgs;
+  va_copy(writeArgs, args);
+  const int written =
+    std::vsnprintf(buffer.data(), buffer.size(), fmt, writeArgs);
+  va_end(writeArgs);
+  if(written < 0) return;
+
+  fwrite(buffer.data(), 1u, static_cast<size_t>(written), stdout);
+  if(newline) fputc('\n', stdout);
+  fflush(stdout);
+}
+
 inline void Print(const char* fmt, ...)
 {
-  const size_t bufferSize = 2048u;
-  char         buffer[bufferSize]{};
-
-  va_list argList;
-  va_start(argList, fmt);
-#ifdef VD_OS_WINDOWS
-  const auto length =
-    static_cast<size_t>(vsprintf_s(buffer, fmt, argList));
-#else
-  const auto length =
-    static_cast<size_t>(vsprintf(buffer, fmt, argList));
-#endif
-  fwrite(buffer, 1u, length, stdout);
-  fflush(stdout);
-#ifdef VD_OS_WINDOWS
-//  OutputDebugStringA(buffer);
-#endif
-  va_end(argList);
+  va_list args;
+  va_start(args, fmt);
+  PrintFormatted(false, fmt, args);
+  va_end(args);
 }
 
 inline void PrintLn(const char* fmt, ...)
 {
-  const size_t bufferSize = 2048u;
-  char         buffer[bufferSize]{};
-
-  va_list argList;
-  va_start(argList, fmt);
-#ifdef VD_OS_WINDOWS
-  auto length = static_cast<size_t>(vsprintf_s(buffer, fmt, argList));
-#else
-  auto length = static_cast<size_t>(vsprintf(buffer, fmt, argList));
-#endif
-  va_end(argList);
-
-  if(length + 1u < bufferSize) {
-    buffer[length + 0] = '\n';
-    buffer[length + 1] = '\0';
-    length++;
-  }
-
-  fwrite(buffer, 1u, length, stdout);
-  fflush(stdout);
-#ifdef VD_OS_WINDOWS
-//  OutputDebugStringA(buffer);
-#endif
+  va_list args;
+  va_start(args, fmt);
+  PrintFormatted(true, fmt, args);
+  va_end(args);
 }
 
 } // namespace
@@ -119,8 +107,6 @@ enum class LogLevel { None, Error, Warning, Info, Verbose };
 #endif
 
 #define VDLogTag(TAG) Print("[" #TAG "]: ");
-// #define VDLogTag(TAG) Print("[" #TAG "] %s(%.04u): ",
-//  GetFilename(__FILE__), __LINE__);
 
 #if VD_LOG_LEVEL >= 3
   #define VDLogI(...)       \

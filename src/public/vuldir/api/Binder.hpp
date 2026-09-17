@@ -13,6 +13,13 @@ class CommandBuffer;
 class Binder
 {
 public:
+  using FrameContextId = u64;
+
+  struct Stats {
+    u32 allocated = 0u;
+    u32 capacity  = 0u;
+  };
+
   struct Desc {
     u32 maxDescriptorCount = 1000000u;
     u32 maxSamplerCount    = 2048u;
@@ -32,16 +39,41 @@ public:
 
   void Unbind(const DescriptorBinding& binding);
 
+  // Deferred bindless free-list reclaim. A descriptor is released only
+  // after every live frame slot that could reference it has retired.
+  FrameContextId RegisterFrameContext(u32 slotCount);
+  void           UnregisterFrameContext(FrameContextId context);
+  void           BeginFrame(FrameContextId context, u32 slot);
+  void           RetireFrame(FrameContextId context, u32 slot);
+  void           FlushDeferred(FrameContextId context);
+
+  Stats GetStats();
+
 private:
   void createHeaps();
   void createLayout();
+  void freeBinding(const DescriptorBinding& binding);
+  void retireSlot(FrameContextId context, u32 slot);
 
 private:
   struct Heap;
 
   Device&         m_device;
   Desc            m_desc;
+  std::mutex      m_mutex;
   Arr<UPtr<Heap>> m_heaps;
+
+  struct PendingUnbind {
+    DescriptorBinding binding;
+    u32               remainingSlots = 0u;
+  };
+  struct FrameSlot {
+    bool                     active = false;
+    Arr<SPtr<PendingUnbind>> pending;
+  };
+
+  FrameContextId                      m_nextFrameContext = 1u;
+  Map<FrameContextId, Arr<FrameSlot>> m_frameContexts;
 
 #ifdef VD_API_VK
 public:

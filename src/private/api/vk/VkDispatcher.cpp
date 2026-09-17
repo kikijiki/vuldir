@@ -4,11 +4,6 @@
 
 using namespace vd;
 
-// extern "C" {
-//  VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
-//    vkGetInstanceProcAddr(VkInstance, const char*);
-//}
-
 #define GetDefaultPFN(NAME)                                     \
   {                                                             \
     const auto fun =                                            \
@@ -79,7 +74,6 @@ void Dispatcher::loadDefault()
 
   GetDefaultPFN(GetDeviceProcAddr);
 
-  // Vulkan core ////////////////////////////////////////////////////
   GetDefaultPFN(EnumerateInstanceExtensionProperties);
   GetDefaultPFN(EnumerateInstanceLayerProperties);
   GetDefaultPFN(EnumerateInstanceVersion);
@@ -117,6 +111,7 @@ void Dispatcher::loadDefault()
   GetDefaultPFN(MapMemory);
   GetDefaultPFN(UnmapMemory);
   GetDefaultPFN(FlushMappedMemoryRanges);
+  GetDefaultPFN(InvalidateMappedMemoryRanges);
   GetDefaultPFN(CreateFramebuffer);
   GetDefaultPFN(DestroyFramebuffer);
   GetDefaultPFN(CreateShaderModule);
@@ -163,7 +158,6 @@ void Dispatcher::loadDefault()
   GetDefaultPFN(CreateSampler);
   GetDefaultPFN(DestroySampler);
 
-  // Commands ///////////////////////////////////////////////////////
   GetDefaultPFN(CmdExecuteCommands);
   GetDefaultPFN(CmdBeginRendering);
   GetDefaultPFN(CmdEndRendering);
@@ -213,9 +207,6 @@ void Dispatcher::loadDefault()
   GetDefaultPFN(CmdCopyQueryPoolResults);
   GetDefaultPFN(CmdResetQueryPool);
   GetDefaultPFN(CmdWriteTimestamp2);
-
-  // Extensions /////////////////////////////////////////////////////
-  // - skip -
 }
 
 void Dispatcher::loadInstance(VkInstance instance)
@@ -225,7 +216,6 @@ void Dispatcher::loadInstance(VkInstance instance)
 
   GetInstancePFN(GetDeviceProcAddr);
 
-  // Vulkan core ////////////////////////////////////////////////////
   GetInstancePFN(EnumerateInstanceExtensionProperties);
   GetInstancePFN(EnumerateInstanceLayerProperties);
   GetInstancePFN(EnumerateInstanceVersion);
@@ -263,6 +253,7 @@ void Dispatcher::loadInstance(VkInstance instance)
   GetInstancePFN(MapMemory);
   GetInstancePFN(UnmapMemory);
   GetInstancePFN(FlushMappedMemoryRanges);
+  GetInstancePFN(InvalidateMappedMemoryRanges);
   GetInstancePFN(CreateFramebuffer);
   GetInstancePFN(DestroyFramebuffer);
   GetInstancePFN(CreateShaderModule);
@@ -309,7 +300,6 @@ void Dispatcher::loadInstance(VkInstance instance)
   GetInstancePFN(CreateSampler);
   GetInstancePFN(DestroySampler);
 
-  // Commands ///////////////////////////////////////////////////////
   GetInstancePFN(CmdExecuteCommands);
   GetInstancePFN(CmdBeginRendering);
   GetInstancePFN(CmdEndRendering);
@@ -360,8 +350,6 @@ void Dispatcher::loadInstance(VkInstance instance)
   GetInstancePFN(CmdResetQueryPool);
   GetInstancePFN(CmdWriteTimestamp2);
 
-  // Extensions /////////////////////////////////////////////////////
-
   // Debug Utils
   GetInstancePFN(CreateDebugUtilsMessengerEXT);
   GetInstancePFN(DestroyDebugUtilsMessengerEXT);
@@ -380,8 +368,13 @@ void Dispatcher::loadInstance(VkInstance instance)
   GetInstancePFN(GetPhysicalDeviceWin32PresentationSupportKHR);
 #endif
 #ifdef VD_OS_LINUX
+  #if defined(VD_WINDOW_WAYLAND)
+  GetInstancePFN(CreateWaylandSurfaceKHR);
+  GetInstancePFN(GetPhysicalDeviceWaylandPresentationSupportKHR);
+  #elif defined(VD_WINDOW_XCB)
   GetInstancePFN(CreateXcbSurfaceKHR);
   GetInstancePFN(GetPhysicalDeviceXcbPresentationSupportKHR);
+  #endif
 #endif
 #ifdef VD_OS_ANDROID
   GetInstancePFN(CreateAndroidSurfaceKHR);
@@ -407,25 +400,12 @@ void Dispatcher::loadDevice(VkDevice device)
   m_source   = Source::Device;
   m_vkDevice = device;
 
-  // GetDevicePFN(GetDeviceProcAddr);
+  // Device-dispatchable entry points only. Instance-level functions stay
+  // loaded from loadInstance(); fetching them via GetDeviceProcAddr trips
+  // WARNING-vkGetDeviceProcAddr-device.
 
-  // Vulkan core ////////////////////////////////////////////////////
-  GetDevicePFN(EnumerateInstanceExtensionProperties);
-  GetDevicePFN(EnumerateInstanceLayerProperties);
-  GetDevicePFN(EnumerateInstanceVersion);
-  GetDevicePFN(EnumeratePhysicalDevices);
-  GetDevicePFN(CreateInstance);
-  GetDevicePFN(DestroyInstance);
-  GetDevicePFN(CreateDevice);
   GetDevicePFN(DestroyDevice);
   GetDevicePFN(DeviceWaitIdle);
-  GetDevicePFN(GetPhysicalDeviceProperties2);
-  GetDevicePFN(GetPhysicalDeviceFeatures2);
-  GetDevicePFN(GetPhysicalDeviceQueueFamilyProperties2);
-  GetDevicePFN(GetPhysicalDeviceMemoryProperties2);
-  GetDevicePFN(GetPhysicalDeviceFormatProperties);
-  GetDevicePFN(GetPhysicalDeviceFormatProperties2);
-  GetDevicePFN(GetPhysicalDeviceImageFormatProperties);
   GetDevicePFN(GetDeviceQueue);
   GetDevicePFN(QueueSubmit2);
   GetDevicePFN(QueueWaitIdle);
@@ -447,6 +427,7 @@ void Dispatcher::loadDevice(VkDevice device)
   GetDevicePFN(MapMemory);
   GetDevicePFN(UnmapMemory);
   GetDevicePFN(FlushMappedMemoryRanges);
+  GetDevicePFN(InvalidateMappedMemoryRanges);
   GetDevicePFN(CreateFramebuffer);
   GetDevicePFN(DestroyFramebuffer);
   GetDevicePFN(CreateShaderModule);
@@ -493,7 +474,6 @@ void Dispatcher::loadDevice(VkDevice device)
   GetDevicePFN(CreateSampler);
   GetDevicePFN(DestroySampler);
 
-  // Commands ///////////////////////////////////////////////////////
   GetDevicePFN(CmdExecuteCommands);
   GetDevicePFN(CmdBeginRendering);
   GetDevicePFN(CmdEndRendering);
@@ -544,11 +524,7 @@ void Dispatcher::loadDevice(VkDevice device)
   GetDevicePFN(CmdResetQueryPool);
   GetDevicePFN(CmdWriteTimestamp2);
 
-  // Extensions /////////////////////////////////////////////////////
-
-  // Debug Utils
-  GetDevicePFN(CreateDebugUtilsMessengerEXT);
-  GetDevicePFN(DestroyDebugUtilsMessengerEXT);
+  // Debug Utils (device / queue / cmdbuf object naming and labels)
   GetDevicePFN(SetDebugUtilsObjectNameEXT);
   GetDevicePFN(SetDebugUtilsObjectTagEXT);
   GetDevicePFN(QueueBeginDebugUtilsLabelEXT);
@@ -558,26 +534,7 @@ void Dispatcher::loadDevice(VkDevice device)
   GetDevicePFN(CmdEndDebugUtilsLabelEXT);
   GetDevicePFN(CmdInsertDebugUtilsLabelEXT);
 
-  // Surface
-#ifdef VD_OS_WINDOWS
-  GetDevicePFN(CreateWin32SurfaceKHR);
-  GetDevicePFN(GetPhysicalDeviceWin32PresentationSupportKHR);
-#endif
-#ifdef VD_OS_LINUX
-  GetDevicePFN(CreateXcbSurfaceKHR);
-  GetDevicePFN(GetPhysicalDeviceXcbPresentationSupportKHR);
-#endif
-#ifdef VD_OS_ANDROID
-  GetDevicePFN(CreateAndroidSurfaceKHR);
-  GetDevicePFN(GetPhysicalDeviceAndroidPresentationSupportKHR);
-#endif
-  GetDevicePFN(DestroySurfaceKHR);
-
-  GetDevicePFN(GetPhysicalDeviceSurfaceSupportKHR);
-  GetDevicePFN(GetPhysicalDeviceSurfaceCapabilitiesKHR);
-  GetDevicePFN(GetPhysicalDeviceSurfaceFormatsKHR);
-  GetDevicePFN(GetPhysicalDeviceSurfacePresentModesKHR);
-
+  // Swapchain (device extension)
   GetDevicePFN(CreateSwapchainKHR);
   GetDevicePFN(DestroySwapchainKHR);
   GetDevicePFN(GetSwapchainImagesKHR);

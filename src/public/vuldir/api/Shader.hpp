@@ -14,6 +14,8 @@ public:
   Shader(Device& device, std::span<char const> code);
   ~Shader();
 
+  Device& GetDevice() const { return m_device; }
+
 private:
   Device&   m_device;
   Arr<char> m_bytecode;

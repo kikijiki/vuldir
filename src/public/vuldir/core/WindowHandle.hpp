@@ -12,7 +12,10 @@ struct WindowHandle {
 #ifdef VD_OS_WINDOWS
   HINSTANCE hInstance = nullptr;
   HWND      hWnd      = nullptr;
-#elif VD_OS_LINUX
+#elif defined(VD_OS_LINUX) && defined(VD_WINDOW_WAYLAND)
+  struct wl_display* display = nullptr;
+  struct wl_surface* surface = nullptr;
+#elif defined(VD_OS_LINUX) && defined(VD_WINDOW_XCB)
   xcb_connection_t* connection = nullptr;
   xcb_window_t      window     = {};
 #endif

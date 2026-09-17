@@ -21,6 +21,18 @@ class Swapchain;
 class Device
 {
 public:
+  struct Stats {
+    u64 gpuMemoryUsed       = 0u;
+    u64 gpuMemoryCommitted  = 0u;
+    u32 gpuMemoryPools      = 0u;
+    u32 descriptorsUsed     = 0u;
+    u32 descriptorsCapacity = 0u;
+    u32 buffers             = 0u;
+    u32 images              = 0u;
+    u32 pipelines           = 0u;
+    u32 shadersLoaded       = 0u;
+  };
+
   struct Desc {
     Str appName;
     u32 appVersion = 0u;
@@ -72,13 +84,10 @@ public:
 
   bool IsDebugEnabled() const { return m_desc.dbgEnable; }
 
-  MemoryPool::Allocation
-  AllocateMemory(MemoryType type, u64 size, u64 alignment);
+  Stats GetStats();
 
-  //  bool Submit(QueueType queueType, const Queue::SubmitInfo& info);
-  //  bool Present();
-  //  void WaitIdle();
-  //  void QueueWaitIdle(QueueType queueType);
+  MemoryPool::Allocation AllocateMemory(
+    MemoryType type, u64 size, u64 alignment, u32 memoryTypeBits = ~0u);
 
 #ifdef VD_API_VK
   Dispatcher& api() { return *m_dispatcher; }
@@ -87,10 +96,14 @@ public:
   VkDevice   GetHandle() const { return m_handle; }
   VkQueue    GetQueueHandle(QueueType queue) const
   {
+    if(!isValid(queue))
+      throw std::out_of_range("Queue type is invalid");
     return m_queues[enumValue(queue)].handle;
   }
   u32 GetQueueFamily(QueueType queue) const
   {
+    if(!isValid(queue))
+      throw std::out_of_range("Queue type is invalid");
     return m_queues[enumValue(queue)].family;
   }
   const VkAllocationCallbacks* GetAllocationCallbacks() const;
@@ -107,6 +120,8 @@ public:
   ID3D12Device8&      api() const { return *m_handle.Get(); }
   ID3D12CommandQueue& GetQueueHandle(QueueType queue) const
   {
+    if(!isValid(queue))
+      throw std::out_of_range("Queue type is invalid");
     return *m_queues[enumValue(queue)].handle.Get();
   }
   CPUDescriptorPool& GetDescriptorPool() { return *m_descriptorPool; }
@@ -114,14 +129,22 @@ public:
 #endif
 
 private:
+  friend class Buffer;
+  friend class Image;
+  friend class Pipeline;
+  friend class Shader;
+  friend class Swapchain;
+
   void create_api(const Desc& desc);
   void create_physicalDevice(const Desc& desc);
   void create_device(const Desc& desc);
   void onDeviceRemoved();
+  void validateResourceStates(const Arr<CommandBuffer*>& cmds) const;
 
 private:
   struct Queue {
     Str name;
+    SPtr<std::recursive_mutex> mutex;
 #ifdef VD_API_VK
     u32     family;
     u32     index;
@@ -139,12 +162,17 @@ private:
   UPtr<Binder>                m_binder;
   SArr<Queue, QueueTypeCount> m_queues;
   Arr<UPtr<MemoryPool>>       m_memoryPools;
+  u32                         m_memoryPoolSerial = 0u;
   std::mutex                  m_memoryMutex;
+  mutable std::mutex          m_resourceStateMutex;
+  std::atomic<u32>            m_bufferCount     = 0u;
+  std::atomic<u32>            m_imageCount      = 0u;
+  std::atomic<u32>            m_pipelineCount   = 0u;
+  std::atomic<u32>            m_shaderLoadCount = 0u;
 
 #ifdef VD_API_VK
   mutable UPtr<HostAllocator> m_hostAllocator;
   mutable UPtr<Dispatcher>    m_dispatcher;
-  // mutable Debug m_debug;
 
   VkInstance   m_instance;
   VkDevice     m_handle;

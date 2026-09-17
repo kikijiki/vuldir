@@ -32,12 +32,14 @@ public:
 #ifdef VD_API_VK
   VkSemaphore GetSemaphoreHandle()
   {
-    VDAssert(m_type != Type::Fence);
+    if(m_type == Type::Fence)
+      throw std::runtime_error("Vulkan fence has no semaphore handle");
     return m_semaphoreHandle;
   }
   VkFence GetFenceHandle()
   {
-    VDAssert(m_type == Type::Fence);
+    if(m_type != Type::Fence)
+      throw std::runtime_error("Vulkan semaphore has no fence handle");
     return m_fenceHandle;
   }
 
@@ -56,14 +58,17 @@ public:
   const Str& GetName() const { return m_name; }
 
   u64 GetValue() const;
-  u64 GetTarget() const { return m_target; }
+  u64 GetTarget() const { return m_target.load(); }
   u64 Step(const u64 step = 1u)
   {
     if(m_type != Type::Timeline)
       throw std::runtime_error{"Fence is not a timeline fence"};
-
-    m_target += step;
-    return m_target;
+    std::scoped_lock lock(m_targetMutex);
+    const u64 target = m_target.load();
+    if(step > MaxU64 - target)
+      throw std::overflow_error{"Timeline fence target overflow"};
+    m_target.store(target + step);
+    return target + step;
   }
 
 public:
@@ -111,6 +116,8 @@ public:
 
   static bool SignalAll(Span<Fence> fences, Span<u64> values)
   {
+    if(values.size() != fences.size())
+      throw std::invalid_argument("Fence values must match the fence count");
     bool result = true;
     for(u32 idx = 0u; idx < fences.size(); ++idx)
       result &= fences[idx].Signal(values[idx]);
@@ -118,13 +125,16 @@ public:
   }
 
 private:
+  friend class Device;
+
   static bool
   wait(Span<Fence> fences, Span<u64> values, u64 timeoutNs, bool all);
 
 private:
   Device& m_device;
   Type    m_type;
-  u64     m_target;
+  std::atomic<u64> m_target;
+  mutable std::mutex m_targetMutex;
   Str     m_name;
 
 #ifdef VD_API_VK
@@ -133,6 +143,8 @@ private:
 #elif VD_API_DX
   ComPtr<ID3D12Fence> m_handle;
   HANDLE              m_event;
+  // One event per fence, so waits on it must not overlap.
+  mutable std::mutex m_eventMutex;
 #endif
 };
 

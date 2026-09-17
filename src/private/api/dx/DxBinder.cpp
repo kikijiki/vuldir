@@ -9,6 +9,7 @@ struct StaticSampler {
   u32                        index;
   D3D12_FILTER               filter;
   D3D12_TEXTURE_ADDRESS_MODE mode;
+  bool                       anisotropy;
 };
 
 struct BindlessSlot {
@@ -19,17 +20,18 @@ struct BindlessSlot {
 static constexpr u64 PushConstantsSize = 16u;
 
 static constexpr StaticSampler StaticSamplers[] = {
-  {0u, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_WRAP},
-  {1u, D3D12_FILTER_MIN_MAG_POINT_MIP_LINEAR,
-   D3D12_TEXTURE_ADDRESS_MODE_WRAP},
+  {0u, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_WRAP,
+   false},
+  {1u, D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+   D3D12_TEXTURE_ADDRESS_MODE_WRAP, true},
   {2u, D3D12_FILTER_MIN_MAG_MIP_POINT,
-   D3D12_TEXTURE_ADDRESS_MODE_MIRROR},
-  {3u, D3D12_FILTER_MIN_MAG_POINT_MIP_LINEAR,
-   D3D12_TEXTURE_ADDRESS_MODE_MIRROR},
+   D3D12_TEXTURE_ADDRESS_MODE_MIRROR, false},
+  {3u, D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+   D3D12_TEXTURE_ADDRESS_MODE_MIRROR, true},
   {4u, D3D12_FILTER_MIN_MAG_MIP_POINT,
-   D3D12_TEXTURE_ADDRESS_MODE_CLAMP},
-  {5u, D3D12_FILTER_MIN_MAG_POINT_MIP_LINEAR,
-   D3D12_TEXTURE_ADDRESS_MODE_CLAMP},
+   D3D12_TEXTURE_ADDRESS_MODE_CLAMP, false},
+  {5u, D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+   D3D12_TEXTURE_ADDRESS_MODE_CLAMP, true},
 };
 
 static constexpr BindlessSlot BindlessSlots[] = {
@@ -99,6 +101,9 @@ struct Binder::Heap {
 
     {
       std::scoped_lock lock(mutex);
+      if(freeList.empty()) {
+        throw std::runtime_error("Descriptor heap exhausted");
+      }
       index = freeList.back();
       freeList.pop_back();
     }
@@ -115,22 +120,33 @@ struct Binder::Heap {
     std::scoped_lock lock(mutex);
     freeList.push_back(idx);
   }
+
+  Binder::Stats stats()
+  {
+    std::scoped_lock lock(mutex);
+    return {
+      .allocated = size - static_cast<u32>(freeList.size()),
+      .capacity  = size};
+  }
 };
 
 Binder::Binder(Device& device, const Desc& desc):
   m_device{device},
   m_desc{desc},
+  m_mutex{},
   m_heaps{},
   m_rootSignature{},
   m_descriptorInfo{}
 {
   { // Create heaps
-    m_heaps.push_back(std::make_unique<Heap>(
-      m_device, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER,
-      m_desc.maxSamplerCount));
-    m_heaps.push_back(std::make_unique<Heap>(
-      m_device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
-      m_desc.maxDescriptorCount));
+    m_heaps.push_back(
+      std::make_unique<Heap>(
+        m_device, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER,
+        m_desc.maxSamplerCount));
+    m_heaps.push_back(
+      std::make_unique<Heap>(
+        m_device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+        m_desc.maxDescriptorCount));
   }
 
   m_descriptorInfo.pushConstantsIdx = 0u;
@@ -146,7 +162,6 @@ Binder::Binder(Device& device, const Desc& desc):
     Arr<D3D12_DESCRIPTOR_RANGE1>   bindlessSamplers;
     Arr<D3D12_DESCRIPTOR_RANGE1>   bindlessResources;
 
-    //////////////////////////////////////////////////////////////////////////
     { // PUSH CONSTANTS
 
       auto& params = rootParams.emplace_back();
@@ -157,15 +172,18 @@ Binder::Binder(Device& device, const Desc& desc):
       params.Constants.RegisterSpace  = 0u;
     }
 
-    //////////////////////////////////////////////////////////////////////////
     { // STATIC SAMPLERS
       for(auto& sampler: StaticSamplers) {
         D3D12_STATIC_SAMPLER_DESC smpDesc{};
 
-        smpDesc.Filter         = sampler.filter;
+        smpDesc.Filter =
+          sampler.anisotropy
+            ? D3D12_FILTER_ANISOTROPIC
+            : sampler.filter;
         smpDesc.AddressU       = sampler.mode;
         smpDesc.AddressV       = sampler.mode;
         smpDesc.AddressW       = sampler.mode;
+        smpDesc.MaxAnisotropy  = sampler.anisotropy ? 16u : 0u;
         smpDesc.ShaderRegister = sampler.index;
         smpDesc.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
         smpDesc.BorderColor =
@@ -178,7 +196,6 @@ Binder::Binder(Device& device, const Desc& desc):
       }
     }
 
-    //////////////////////////////////////////////////////////////////////////
     { // BINDLESS RESOURCES
       for(auto& slot: BindlessSlots) {
         D3D12_DESCRIPTOR_RANGE1 rng{};
@@ -216,9 +233,6 @@ Binder::Binder(Device& device, const Desc& desc):
         std::data(bindlessResources);
     }
 
-    /////////////////////////////////////////////////////////////////////
-    // ROOT SIGNATURE
-
     D3D12_VERSIONED_ROOT_SIGNATURE_DESC signatureDesc{};
 
     signatureDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
@@ -249,8 +263,28 @@ Binder::~Binder()
   m_heaps.clear();
 }
 
+void Binder::Bind(CommandBuffer& cmd, BindPoint bindPoint)
+{
+  const auto& descriptors = GetDescriptorInfo();
+  cmd.GetHandle().SetDescriptorHeaps(
+    size32(descriptors.heaps), descriptors.heaps.data());
+
+  if(bindPoint == BindPoint::Graphics) {
+    cmd.GetHandle().SetGraphicsRootSignature(GetRootSignature());
+    for(const auto& table: descriptors.tables)
+      cmd.GetHandle().SetGraphicsRootDescriptorTable(
+        table.index, table.handle);
+  } else {
+    cmd.GetHandle().SetComputeRootSignature(GetRootSignature());
+    for(const auto& table: descriptors.tables)
+      cmd.GetHandle().SetComputeRootDescriptorTable(
+        table.index, table.handle);
+  }
+}
+
 DescriptorBinding Binder::Bind(const Sampler::View& view)
 {
+  std::scoped_lock lock(m_mutex);
   DescriptorBinding binding{};
   binding.type = DescriptorType::Sampler;
   binding.index =
@@ -262,6 +296,7 @@ DescriptorBinding Binder::Bind(const Sampler::View& view)
 
 DescriptorBinding Binder::Bind(const Buffer::View& view)
 {
+  std::scoped_lock lock(m_mutex);
   DescriptorBinding binding{};
   binding.type = DescriptorType::StorageBuffer;
   binding.index =
@@ -274,6 +309,7 @@ DescriptorBinding Binder::Bind(const Buffer::View& view)
 
 DescriptorBinding Binder::Bind(const Image::View& view)
 {
+  std::scoped_lock lock(m_mutex);
   DescriptorBinding binding{};
 
   switch(view.type) {
@@ -294,7 +330,6 @@ DescriptorBinding Binder::Bind(const Image::View& view)
         view.GetResourceName());
       break;
     default:
-      // throw std::runtime_error("Invalid image view type");
       break;
   }
 
@@ -302,6 +337,102 @@ DescriptorBinding Binder::Bind(const Image::View& view)
 }
 
 void Binder::Unbind(const DescriptorBinding& binding)
+{
+  std::scoped_lock lock(m_mutex);
+  if(!binding.IsValid()) return;
+  u32 activeSlots = 0u;
+  for(const auto& [context, slots]: m_frameContexts) {
+    VD_UNUSED(context);
+    for(const auto& slot: slots)
+      if(slot.active) ++activeSlots;
+  }
+  if(activeSlots == 0u) {
+    freeBinding(binding);
+    return;
+  }
+
+  auto pending = std::make_shared<PendingUnbind>();
+  pending->binding        = binding;
+  pending->remainingSlots = activeSlots;
+  for(auto& [context, slots]: m_frameContexts) {
+    VD_UNUSED(context);
+    for(auto& slot: slots)
+      if(slot.active) slot.pending.push_back(pending);
+  }
+}
+
+Binder::FrameContextId Binder::RegisterFrameContext(u32 slotCount)
+{
+  std::scoped_lock lock(m_mutex);
+  const FrameContextId id = m_nextFrameContext++;
+  m_frameContexts[id].resize(std::max(1u, slotCount));
+  return id;
+}
+
+void Binder::UnregisterFrameContext(FrameContextId context)
+{
+  std::scoped_lock lock(m_mutex);
+  auto it = m_frameContexts.find(context);
+  if(it == m_frameContexts.end()) return;
+  for(u32 slot = 0u; slot < it->second.size(); ++slot)
+    retireSlot(context, slot);
+  m_frameContexts.erase(context);
+}
+
+void Binder::BeginFrame(FrameContextId context, u32 slot)
+{
+  std::scoped_lock lock(m_mutex);
+  auto it = m_frameContexts.find(context);
+  if(it == m_frameContexts.end())
+    throw std::runtime_error("Binder: unknown frame context");
+  auto& frameSlot = it->second[slot % it->second.size()];
+  if(frameSlot.active)
+    throw std::runtime_error("Binder: frame slot is already active");
+  frameSlot.active = true;
+}
+
+void Binder::RetireFrame(FrameContextId context, u32 slot)
+{
+  std::scoped_lock lock(m_mutex);
+  retireSlot(context, slot);
+}
+
+void Binder::FlushDeferred(FrameContextId context)
+{
+  std::scoped_lock lock(m_mutex);
+  auto it = m_frameContexts.find(context);
+  if(it == m_frameContexts.end()) return;
+  for(u32 slot = 0u; slot < it->second.size(); ++slot)
+    retireSlot(context, slot);
+}
+
+void Binder::retireSlot(FrameContextId context, u32 slot)
+{
+  auto it = m_frameContexts.find(context);
+  if(it == m_frameContexts.end()) return;
+  auto& frameSlot = it->second[slot % it->second.size()];
+  if(!frameSlot.active) return;
+
+  frameSlot.active = false;
+  for(auto& pending: frameSlot.pending) {
+    if(--pending->remainingSlots == 0u) freeBinding(pending->binding);
+  }
+  frameSlot.pending.clear();
+}
+
+Binder::Stats Binder::GetStats()
+{
+  std::scoped_lock lock(m_mutex);
+  Stats result{};
+  for(auto& heap: m_heaps) {
+    const auto heapStats = heap->stats();
+    result.allocated += heapStats.allocated;
+    result.capacity += heapStats.capacity;
+  }
+  return result;
+}
+
+void Binder::freeBinding(const DescriptorBinding& binding)
 {
   getHeap(binding.type).free(binding.index);
 }

@@ -44,9 +44,6 @@ private:
   const VkAllocationCallbacks* m_callbacks;
 
   Source m_source;
-  ///////////////////////////////////////////////////////////////////////
-  // Vulkan core
-  ///////////////////////////////////////////////////////////////////////
 public:
   /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkEnumerateInstanceVersion.html
   VkResult EnumerateInstanceVersion(u32* pVersion)
@@ -79,20 +76,20 @@ public:
       pLayerName, pPropertyCount, pProperties);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCreateInstance.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCreateInstance.html
   VkResult CreateInstance(
     const VkInstanceCreateInfo* pCreateInfo, VkInstance* pInstance)
   {
     return pfn.CreateInstance(pCreateInfo, m_callbacks, pInstance);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkDestroyInstance.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkDestroyInstance.html
   void DestroyInstance(VkInstance instance)
   {
     pfn.DestroyInstance(instance, m_callbacks);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCreateDevice.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCreateDevice.html
   VkResult CreateDevice(
     VkPhysicalDevice          physicalDevice,
     const VkDeviceCreateInfo* pCreateInfo, VkDevice* pDevice)
@@ -101,13 +98,13 @@ public:
       physicalDevice, pCreateInfo, m_callbacks, pDevice);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkDestroyDevice.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkDestroyDevice.html
   void DestroyDevice(VkDevice device)
   {
     pfn.DestroyDevice(device, m_callbacks);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkDeviceWaitIdle.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkDeviceWaitIdle.html
   void DeviceWaitIdle() { pfn.DeviceWaitIdle(m_vkDevice); }
 
   /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkGetPhysicalDeviceProperties2.html
@@ -205,7 +202,7 @@ public:
     return pfn.QueueBindSparse(queue, bindInfoCount, pBindInfo, fence);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCreateBuffer.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCreateBuffer.html
   VkResult
   CreateBuffer(const VkBufferCreateInfo* pCreateInfo, VkBuffer* pBuffer)
   {
@@ -213,7 +210,7 @@ public:
       m_vkDevice, pCreateInfo, m_callbacks, pBuffer);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkDestroyBuffer.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkDestroyBuffer.html
   void DestroyBuffer(VkBuffer buffer)
   {
     pfn.DestroyBuffer(m_vkDevice, buffer, m_callbacks);
@@ -227,7 +224,7 @@ public:
       m_vkDevice, buffer, pMemoryRequirements);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkBindBufferMemory.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkBindBufferMemory.html
   VkResult BindBufferMemory(
     const VkBuffer buffer, const VkDeviceMemory memory,
     const VkDeviceSize memoryOffset)
@@ -236,7 +233,7 @@ public:
       m_vkDevice, buffer, memory, memoryOffset);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCreateImage.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCreateImage.html
   VkResult
   CreateImage(const VkImageCreateInfo* pCreateInfo, VkImage* pImage)
   {
@@ -244,7 +241,7 @@ public:
       m_vkDevice, pCreateInfo, m_callbacks, pImage);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkDestroyImage.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkDestroyImage.html
   void DestroyImage(VkImage image)
   {
     pfn.DestroyImage(m_vkDevice, image, m_callbacks);
@@ -258,7 +255,7 @@ public:
       m_vkDevice, image, pMemoryRequirements);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkBindImageMemory.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkBindImageMemory.html
   VkResult BindImageMemory(
     const VkImage image, const VkDeviceMemory memory,
     const VkDeviceSize memoryOffset)
@@ -266,7 +263,7 @@ public:
     return pfn.BindImageMemory(m_vkDevice, image, memory, memoryOffset);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCreateBufferView.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCreateBufferView.html
   VkResult CreateBufferView(
     const VkBufferViewCreateInfo* pCreateInfo, VkBufferView* pView)
   {
@@ -280,7 +277,7 @@ public:
     return pfn.DestroyBufferView(m_vkDevice, imageView, m_callbacks);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCreateImageView.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCreateImageView.html
   VkResult CreateImageView(
     const VkImageViewCreateInfo* pCreateInfo, VkImageView* pView)
   {
@@ -288,13 +285,13 @@ public:
       m_vkDevice, pCreateInfo, m_callbacks, pView);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkDestroyImageView.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkDestroyImageView.html
   void DestroyImageView(VkImageView imageView)
   {
     return pfn.DestroyImageView(m_vkDevice, imageView, m_callbacks);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkAllocateMemory.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkAllocateMemory.html
   VkResult AllocateMemory(
     const VkMemoryAllocateInfo* pAllocateInfo, VkDeviceMemory* pMemory)
   {
@@ -302,13 +299,13 @@ public:
       m_vkDevice, pAllocateInfo, m_callbacks, pMemory);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkFreeMemory.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkFreeMemory.html
   void FreeMemory(VkDeviceMemory memory)
   {
     pfn.FreeMemory(m_vkDevice, memory, m_callbacks);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkMapMemory.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkMapMemory.html
   VkResult MapMemory(
     VkDeviceMemory memory, const VkDeviceSize offset,
     const VkDeviceSize size, const VkMemoryMapFlags flags,
@@ -318,18 +315,26 @@ public:
       m_vkDevice, memory, offset, size, flags, ppData);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkUnmapMemory.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkUnmapMemory.html
   void UnmapMemory(VkDeviceMemory memory)
   {
     return pfn.UnmapMemory(m_vkDevice, memory);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkFlushMappedMemoryRanges.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkFlushMappedMemoryRanges.html
   VkResult FlushMappedMemoryRanges(
     const u32                  memoryRangeCount,
     const VkMappedMemoryRange* pMemoryRanges)
   {
     return pfn.FlushMappedMemoryRanges(
+      m_vkDevice, memoryRangeCount, pMemoryRanges);
+  }
+
+  VkResult InvalidateMappedMemoryRanges(
+    const u32                  memoryRangeCount,
+    const VkMappedMemoryRange* pMemoryRanges)
+  {
+    return pfn.InvalidateMappedMemoryRanges(
       m_vkDevice, memoryRangeCount, pMemoryRanges);
   }
 
@@ -378,13 +383,13 @@ public:
   }
 
   /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkResetCommandPool.html
-  void ResetCommandPool(
+  VkResult ResetCommandPool(
     const VkCommandPool commandPool, VkCommandPoolResetFlags flags)
   {
-    pfn.ResetCommandPool(m_vkDevice, commandPool, flags);
+    return pfn.ResetCommandPool(m_vkDevice, commandPool, flags);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkTrimCommandPool.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkTrimCommandPool.html
   void TrimCommandPool(
     const VkCommandPool commandPool, const VkCommandPoolTrimFlags flags)
   {
@@ -682,17 +687,8 @@ public:
     pfn.DestroySampler(m_vkDevice, sampler, m_callbacks);
   }
 
-  // Commands ///////////////////////////////////////////////////////
-
   /// Execute a secondary command buffer from a primary command buffer.
   /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCmdExecuteCommands.html
-  /// @param[in] commandBuffer      is a handle to a primary command
-  /// buffer that the secondary command buffers are executed in.
-  /// @param[in] commandBufferCount is the length of the pCommandBuffers
-  /// array.
-  /// @param[in] pCommandBuffers    is an array of secondary command
-  /// buffer handles, which are recorded to execute in the primary
-  /// command buffer in the order they are listed in the array.
   void CmdExecuteCommands(
     const VkCommandBuffer commandBuffer, const u32 commandBufferCount,
     const VkCommandBuffer* pCommandBuffers)
@@ -1058,7 +1054,7 @@ public:
       commandBuffer, dstBuffer, dstOffset, size, data);
   }
 
-  // @link https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdPipelineBarrier2.html
+  /// @link https://registry.khronos.org/vulkan/specs/latest/man/html/vkCmdPipelineBarrier2.html
   void CmdPipelineBarrier2(
     const VkCommandBuffer   commandBuffer,
     const VkDependencyInfo* pDependencyInfo)
@@ -1136,9 +1132,7 @@ public:
       commandBuffer, stage, queryPool, query);
   }
 
-  ///////////////////////////////////////////////////////////////////////
   // Debug Utils
-  ///////////////////////////////////////////////////////////////////////
 public:
   /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCreateDebugUtilsMessengerEXT.html
   VkResult CreateDebugUtilsMessengerEXT(
@@ -1222,9 +1216,7 @@ public:
     pfn.CmdInsertDebugUtilsLabelEXT(commandBuffer, pLabelInfo);
   }
 
-  ///////////////////////////////////////////////////////////////////////
   // Surface and presentation
-  ///////////////////////////////////////////////////////////////////////
 public:
 #ifdef VD_OS_WINDOWS
   /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCreateWin32SurfaceKHR.html
@@ -1246,6 +1238,25 @@ public:
 #endif
 
 #ifdef VD_OS_LINUX
+  #if defined(VD_WINDOW_WAYLAND)
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCreateWaylandSurfaceKHR.html
+  VkResult CreateWaylandSurfaceKHR(
+    const VkWaylandSurfaceCreateInfoKHR* pCreateInfo,
+    VkSurfaceKHR*                        pSurface)
+  {
+    return pfn.CreateWaylandSurfaceKHR(
+      m_vkInstance, pCreateInfo, m_callbacks, pSurface);
+  }
+
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkGetPhysicalDeviceWaylandPresentationSupportKHR.html
+  bool GetPhysicalDeviceWaylandPresentationSupportKHR(
+    VkPhysicalDevice physicalDevice, uint32_t queueFamilyIndex,
+    struct wl_display* display)
+  {
+    return pfn.GetPhysicalDeviceWaylandPresentationSupportKHR(
+      physicalDevice, queueFamilyIndex, display);
+  }
+  #elif defined(VD_WINDOW_XCB)
   /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkCreateXcbSurfaceKHR.html
   VkResult CreateXcbSurfaceKHR(
     const VkXcbSurfaceCreateInfoKHR* pCreateInfo,
@@ -1263,6 +1274,7 @@ public:
     return pfn.GetPhysicalDeviceXcbPresentationSupportKHR(
       physicalDevice, queueFamilyIndex, connection, visual_id);
   }
+  #endif
 #endif
 
 #ifdef VD_OS_ANDROID
@@ -1367,20 +1379,15 @@ public:
       m_vkDevice, pAcquireInfo, pImageIndex);
   }
 
-  /// @link ://www.khronos.org/registry/vulkan/specs/latest/man/html/vkQueuePresentKHR.html
+  /// @link https://www.khronos.org/registry/vulkan/specs/latest/man/html/vkQueuePresentKHR.html
   VkResult
   QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPresentInfo)
   {
     return pfn.QueuePresentKHR(queue, pPresentInfo);
   }
 
-  ///////////////////////////////////////////////////////////////////////
-  // Function pointers
-  ///////////////////////////////////////////////////////////////////////
 public:
   struct {
-    // Vulkan core ////////////////////////////////////////////////////
-
     PFN_vkGetInstanceProcAddr GetInstanceProcAddr;
     PFN_vkGetDeviceProcAddr   GetDeviceProcAddr;
 
@@ -1435,6 +1442,7 @@ public:
     PFN_vkMapMemory               MapMemory;
     PFN_vkUnmapMemory             UnmapMemory;
     PFN_vkFlushMappedMemoryRanges FlushMappedMemoryRanges;
+    PFN_vkInvalidateMappedMemoryRanges InvalidateMappedMemoryRanges;
 
     PFN_vkCreateFramebuffer  CreateFramebuffer;
     PFN_vkDestroyFramebuffer DestroyFramebuffer;
@@ -1491,9 +1499,7 @@ public:
     PFN_vkCreateSampler  CreateSampler;
     PFN_vkDestroySampler DestroySampler;
 
-    // Commands ///////////////////////////////////////////////////////
-
-    PFN_vkCmdExecuteCommands  CmdExecuteCommands;
+      PFN_vkCmdExecuteCommands  CmdExecuteCommands;
     PFN_vkCmdBeginRendering   CmdBeginRendering;
     PFN_vkCmdEndRendering     CmdEndRendering;
     PFN_vkCmdBeginRenderPass  CmdBeginRenderPass;
@@ -1551,8 +1557,6 @@ public:
     PFN_vkCmdResetQueryPool       CmdResetQueryPool;
     PFN_vkCmdWriteTimestamp2      CmdWriteTimestamp2;
 
-    // Extensions /////////////////////////////////////////////////////
-
     // Debug Utils
     PFN_vkCreateDebugUtilsMessengerEXT  CreateDebugUtilsMessengerEXT;
     PFN_vkDestroyDebugUtilsMessengerEXT DestroyDebugUtilsMessengerEXT;
@@ -1575,9 +1579,15 @@ public:
 #endif
 
 #ifdef VD_OS_LINUX
+  #if defined(VD_WINDOW_WAYLAND)
+    PFN_vkCreateWaylandSurfaceKHR CreateWaylandSurfaceKHR;
+    PFN_vkGetPhysicalDeviceWaylandPresentationSupportKHR
+      GetPhysicalDeviceWaylandPresentationSupportKHR;
+  #elif defined(VD_WINDOW_XCB)
     PFN_vkCreateXcbSurfaceKHR CreateXcbSurfaceKHR;
     PFN_vkGetPhysicalDeviceXcbPresentationSupportKHR
       GetPhysicalDeviceXcbPresentationSupportKHR;
+  #endif
 #endif
 
 #ifdef VD_OS_ANDROID

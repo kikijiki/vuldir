@@ -14,6 +14,8 @@ namespace vd {
 class Library
 {
 public:
+  VD_NONMOVABLE(Library);
+
   Library(const char* path = nullptr): m_module{nullptr} { Load(path); }
 
   ~Library() { Unload(); }

@@ -8,17 +8,21 @@ using namespace vd;
 Fence::Fence(Device& device, Type type, u64 initialValue):
   m_device{device},
   m_type{type},
-  m_target{0u},
+  m_target{initialValue},
+  m_targetMutex{},
   m_name{},
   m_semaphoreHandle{},
   m_fenceHandle{}
 {
+  if(m_type != Type::Timeline && initialValue != 0u)
+    throw std::invalid_argument(
+      "Only timeline fences accept a non-zero initial value");
   if(m_type == Type::Fence) {
     VkFenceCreateInfo ci{
       .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
       .pNext = nullptr,
       .flags = 0};
-    m_device.api().CreateFence(&ci, &m_fenceHandle);
+    VDVkTry(m_device.api().CreateFence(&ci, &m_fenceHandle));
   } else {
     VkSemaphoreTypeCreateInfo typeInfo{
       .sType         = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
@@ -75,17 +79,15 @@ Fence::~Fence()
 
 void Fence::Reset()
 {
-  VDAssertMsg(
-    m_type == Type::Fence, "Invalid for non-fence semaphores");
+  if(m_type != Type::Fence)
+    throw std::runtime_error("Invalid for non-fence semaphores");
 
-  //if(!m_name.empty()) { VDLogV("Resetting fence %s", m_name.c_str()); }
-
-  m_device.api().ResetFences(1u, &m_fenceHandle);
+  VDVkTry(m_device.api().ResetFences(1u, &m_fenceHandle));
 }
 
 bool Fence::Wait(u64 timeoutNs) const
 {
-  return WaitValue(m_target, timeoutNs);
+  return WaitValue(m_target.load(), timeoutNs);
 }
 
 bool Fence::WaitValue(u64 value, u64 timeoutNs) const
@@ -102,31 +104,30 @@ bool Fence::WaitValue(u64 value, u64 timeoutNs) const
     info.pSemaphores    = &m_semaphoreHandle;
     info.pValues        = &value;
 
-    //if(!m_name.empty()) {
-    //  VDLogV("Waiting fence %s for value %llu", m_name.c_str(), value);
-    //}
-
     const auto result = m_device.api().WaitSemaphores(&info, timeoutNs);
-    return result == VK_SUCCESS;
+    if(result == VK_TIMEOUT) return false;
+    VDVkTry(result);
+    return true;
   } else {
-    //if(!m_name.empty()) { VDLogV("Waiting fence %s", m_name.c_str()); }
-
     const auto result =
       m_device.api().WaitForFences(1u, &m_fenceHandle, true, timeoutNs);
-    return result == VK_SUCCESS;
+    if(result == VK_TIMEOUT) return false;
+    VDVkTry(result);
+    return true;
   }
 }
 
-bool Fence::Signal() { return Signal(m_target); }
+bool Fence::Signal() { return Signal(m_target.load()); }
 
 bool Fence::Signal(u64 value)
 {
   if(m_type != Type::Timeline)
     throw std::runtime_error("Invalid for non-timeline fences");
 
-  //if(!m_name.empty()) {
-  //  VDLogV("Signaling fence %s for value %llu", m_name.c_str(), value);
-  //}
+  std::scoped_lock targetLock(m_targetMutex);
+  if(value < m_target.load())
+    throw std::invalid_argument(
+      "Timeline fence target cannot move backwards");
 
   VkSemaphoreSignalInfo info;
   info.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO;
@@ -135,7 +136,9 @@ bool Fence::Signal(u64 value)
   info.value     = value;
 
   const auto result = m_device.api().SignalSemaphore(&info);
-  return result == VK_SUCCESS;
+  if(result != VK_SUCCESS) return false;
+  m_target.store(value);
+  return true;
 }
 
 u64 Fence::GetValue() const
@@ -145,12 +148,9 @@ u64 Fence::GetValue() const
 
   u64 value = 0;
 
-  const auto result =
-    m_device.api().GetSemaphoreCounterValue(m_semaphoreHandle, &value);
-
-  if(result == VK_SUCCESS) return value;
-  else
-    return MaxU64;
+  VDVkTry(
+    m_device.api().GetSemaphoreCounterValue(m_semaphoreHandle, &value));
+  return value;
 }
 
 bool Fence::wait(
@@ -167,8 +167,13 @@ bool Fence::wait(
     VDLogE("Too many fences for wait function, max is %llu", maxFences);
     return false;
   }
+  if(!values.empty() && values.size() != 1u && values.size() != fences.size())
+    throw std::invalid_argument("Fence values must be singular or match the fence count");
 
   auto& device = fences[0].m_device;
+  for(const auto& fence: fences)
+    if(&fence.m_device != &device)
+      throw std::invalid_argument("All fences must belong to the same device");
 
   VkSemaphoreWaitInfoKHR info{};
   info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO_KHR;
@@ -176,9 +181,9 @@ bool Fence::wait(
   info.flags = all ? 0u : VK_SEMAPHORE_WAIT_ANY_BIT_KHR;
 
   u64 targetValues[maxFences];
-  if(values.empty()) {
+  if(values.empty() || values.size() == 1u) {
     for(u32 idx = 0u; idx < vd::size32(fences); ++idx)
-      targetValues[idx] = fences[idx].GetTarget();
+      targetValues[idx] = values.empty() ? fences[idx].GetTarget() : values[0];
 
     info.pValues = targetValues;
   } else {
@@ -187,12 +192,7 @@ bool Fence::wait(
 
   VkSemaphore handles[maxFences];
 
-  //VDLogV("Waiting for %llu fences", fences.size());
   for(u32 idx = 0u; idx < vd::size32(fences); ++idx) {
-    //if(!fences[idx].m_name.empty()) {
-    //  VDLogV(
-    //    "- %s for value %llu", fences[idx].m_name.c_str(), values[idx]);
-    //}
     handles[idx] = fences[idx].GetSemaphoreHandle();
   }
 
@@ -200,5 +200,7 @@ bool Fence::wait(
   info.pSemaphores    = handles;
 
   const auto result = device.api().WaitSemaphores(&info, timeoutNs);
-  return result == VK_SUCCESS;
+  if(result == VK_TIMEOUT) return false;
+  VDVkTry(result);
+  return true;
 }

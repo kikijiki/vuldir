@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <wchar.h>
 
+
 namespace vd {
 
 template<typename Cont>
@@ -67,8 +68,10 @@ inline constexpr bool hasFlag(const T1 value, const T2 flag)
 template<typename T>
 inline constexpr bool hasBit(const T value, const u32 index)
 {
-  const auto flag = 1u << index;
-  return (value & flag) == flag;
+  using U = std::make_unsigned_t<T>;
+  if(index >= std::numeric_limits<U>::digits) return false;
+  const U flag = U{1} << index;
+  return (static_cast<U>(value) & flag) == flag;
 }
 
 template<typename T>
@@ -89,6 +92,8 @@ template<typename T>
 inline constexpr u32 flagIndex(T value)
 {
   auto intValue = static_cast<unsigned long>(value);
+  if(intValue == 0u)
+    throw std::invalid_argument("Cannot find the index of an empty flag");
 #ifdef _MSC_VER
   unsigned long index;
   _BitScanForward(&index, intValue);
@@ -100,20 +105,30 @@ inline constexpr u32 flagIndex(T value)
 
 inline constexpr u32 bitMask32(const u32 off, const u32 size)
 {
-  return ~(0xffffffff << size) << off;
+  if(off > 32u || size > 32u - off)
+    throw std::invalid_argument("32-bit mask range is invalid");
+  if(size == 0u) return 0u;
+  const u32 mask = size == 32u ? MaxU32 : (1u << size) - 1u;
+  return mask << off;
 }
 
 inline constexpr u32
 bitSet32(const u32 buf, const u32 value, const u32 off, const u32 size)
 {
-  const u32 mask = ~(0xffffffff << size);
+  if(off > 32u || size > 32u - off)
+    throw std::invalid_argument("32-bit field range is invalid");
+  const u32 mask = size == 32u ? MaxU32
+                               : size == 0u ? 0u : (1u << size) - 1u;
   return (buf & ~(mask << off)) | ((value & mask) << off);
 }
 
 inline constexpr u32
 bitGet32(const u32 buf, const u32 off, const u32 size)
 {
-  const u32 mask = ~(0xffffffff << size);
+  if(off > 32u || size > 32u - off)
+    throw std::invalid_argument("32-bit field range is invalid");
+  const u32 mask = size == 32u ? MaxU32
+                               : size == 0u ? 0u : (1u << size) - 1u;
   return (buf >> off) & mask;
 }
 
@@ -154,12 +169,11 @@ inline constexpr u8 byteReverse(u8 v)
 
 inline constexpr u32 bitReverse(u32 v, u32 bitCount)
 {
+  if(bitCount > 32u)
+    throw std::invalid_argument("Cannot reverse more than 32 bits");
   u32 ret = 0u;
-  for(u32 bitIdx = 0u; bitIdx <= (bitCount / 2u); ++bitIdx) {
-    u32 inverted = bitCount - bitIdx - 1u;
-    ret |= ((v >> bitIdx) & 0x1) << inverted;
-    ret |= ((v >> inverted) & 0x1) << bitIdx;
-  }
+  for(u32 bitIdx = 0u; bitIdx < bitCount; ++bitIdx)
+    ret |= ((v >> bitIdx) & 0x1u) << (bitCount - bitIdx - 1u);
   return ret;
 }
 
@@ -209,14 +223,15 @@ inline Arr<const T*> toPtrVector(const Arr<UPtr<T>>& uptrVec)
 template<typename... Args>
 Str formatString(const char* format, Args&&... args)
 {
-  Str        buf;
-  const auto size =
-    toU64(snprintf(nullptr, 0, format, std::forward<Args>(args)...)) +
-    1u;
-  buf.resize(size);
-  snprintf(
-    const_cast<char*>(buf.data()), size, format,
-    std::forward<Args>(args)...);
+  const int required =
+    snprintf(nullptr, 0, format, std::forward<Args>(args)...);
+  if(required < 0) throw std::runtime_error("String formatting failed");
+
+  Str buf(static_cast<u64>(required), '\0');
+  const int written = snprintf(
+    buf.data(), buf.size() + 1u, format, std::forward<Args>(args)...);
+  if(written != required)
+    throw std::runtime_error("String formatting result changed between passes");
 
   return buf;
 }
@@ -248,56 +263,149 @@ template<typename... Args>
 inline const char* formatBuffer(
   char* buffer, const u64 size, const char* format, Args&&... args)
 {
-  snprintf(buffer, size, format, args...);
+  if(!buffer || size == 0u || !format)
+    throw std::invalid_argument("Formatting buffer is invalid");
+  if(size > static_cast<u64>(std::numeric_limits<size_t>::max()))
+    throw std::length_error("Formatting buffer is too large");
+  const int result = snprintf(
+    buffer, static_cast<size_t>(size), format,
+    std::forward<Args>(args)...);
+  if(result < 0)
+    throw std::runtime_error("String formatting failed");
   return buffer;
 }
 
-inline WStr widen(const Str& str)
+#ifndef VD_OS_WINDOWS
+inline u32 decodeUtf8Codepoint(Strv value, u64& offset)
 {
-  WStr ret(str.size(), L' ');
+  const auto first = static_cast<u8>(value[offset++]);
+  if(first <= 0x7fu) return first;
 
-#ifdef VD_OS_WINDOWS
-  const auto size = MultiByteToWideChar(
-    CP_UTF8, 0, str.data(), toI32(str.size()), nullptr, 0);
-  if(size > 0) {
-    ret.resize(toU64(size) + 1u);
-    MultiByteToWideChar(
-      CP_UTF8, 0, str.data(), toI32(str.size()), &ret[0], size);
+  u32 codepoint = 0u;
+  u32 trailing  = 0u;
+  u32 minimum   = 0u;
+  if((first & 0xe0u) == 0xc0u) {
+    codepoint = first & 0x1fu;
+    trailing  = 1u;
+    minimum   = 0x80u;
+  } else if((first & 0xf0u) == 0xe0u) {
+    codepoint = first & 0x0fu;
+    trailing  = 2u;
+    minimum   = 0x800u;
+  } else if((first & 0xf8u) == 0xf0u) {
+    codepoint = first & 0x07u;
+    trailing  = 3u;
+    minimum   = 0x10000u;
+  } else {
+    throw std::runtime_error("Invalid UTF-8 string");
   }
-#else
-  ret.resize(mbstowcs(&ret[0], str.c_str(), ret.size()));
+
+  if(trailing > value.size() - offset)
+    throw std::runtime_error("Truncated UTF-8 string");
+  for(u32 idx = 0u; idx < trailing; ++idx) {
+    const auto next = static_cast<u8>(value[offset++]);
+    if((next & 0xc0u) != 0x80u)
+      throw std::runtime_error("Invalid UTF-8 continuation byte");
+    codepoint = (codepoint << 6u) | (next & 0x3fu);
+  }
+  if(
+    codepoint < minimum || codepoint > 0x10ffffu ||
+    (codepoint >= 0xd800u && codepoint <= 0xdfffu))
+    throw std::runtime_error("Invalid UTF-8 codepoint");
+  return codepoint;
+}
+
+inline void appendUtf8Codepoint(Str& value, u32 codepoint)
+{
+  if(
+    codepoint > 0x10ffffu ||
+    (codepoint >= 0xd800u && codepoint <= 0xdfffu))
+    throw std::runtime_error("Invalid wide codepoint");
+  if(codepoint <= 0x7fu) {
+    value.push_back(static_cast<char>(codepoint));
+  } else if(codepoint <= 0x7ffu) {
+    value.push_back(static_cast<char>(0xc0u | (codepoint >> 6u)));
+    value.push_back(static_cast<char>(0x80u | (codepoint & 0x3fu)));
+  } else if(codepoint <= 0xffffu) {
+    value.push_back(static_cast<char>(0xe0u | (codepoint >> 12u)));
+    value.push_back(
+      static_cast<char>(0x80u | ((codepoint >> 6u) & 0x3fu)));
+    value.push_back(static_cast<char>(0x80u | (codepoint & 0x3fu)));
+  } else {
+    value.push_back(static_cast<char>(0xf0u | (codepoint >> 18u)));
+    value.push_back(
+      static_cast<char>(0x80u | ((codepoint >> 12u) & 0x3fu)));
+    value.push_back(
+      static_cast<char>(0x80u | ((codepoint >> 6u) & 0x3fu)));
+    value.push_back(static_cast<char>(0x80u | (codepoint & 0x3fu)));
+  }
+}
 #endif
 
+inline WStr widen(const Str& str)
+{
+  if(str.empty()) return {};
+
+#ifdef VD_OS_WINDOWS
+  if(str.size() > static_cast<u64>(std::numeric_limits<i32>::max()))
+    throw std::length_error("UTF-8 string is too large to convert");
+  const i32 inputSize = static_cast<i32>(str.size());
+  const auto size = MultiByteToWideChar(
+    CP_UTF8, MB_ERR_INVALID_CHARS, str.data(), inputSize, nullptr, 0);
+  if(size <= 0) throw std::runtime_error("Invalid UTF-8 string");
+  WStr ret(static_cast<u64>(size), L'\0');
+  if(
+    MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, str.data(), inputSize, ret.data(),
+      size) != size)
+    throw std::runtime_error("Failed to convert UTF-8 string");
   return ret;
+#else
+  static_assert(sizeof(wchar_t) >= sizeof(u32));
+  WStr result;
+  result.reserve(str.size());
+  for(u64 offset = 0u; offset < str.size();)
+    result.push_back(
+      static_cast<wchar_t>(decodeUtf8Codepoint(str, offset)));
+  return result;
+#endif
 }
 
 inline Str narrow(const WStr& str)
 {
-  Str ret(str.size(), ' ');
+  if(str.empty()) return {};
 #ifdef VD_OS_WINDOWS
+  if(str.size() > static_cast<u64>(std::numeric_limits<i32>::max()))
+    throw std::length_error("Wide string is too large to convert");
+  const i32 inputSize = static_cast<i32>(str.size());
   const auto size = WideCharToMultiByte(
-    CP_UTF8, 0, str.data(), toI32(str.size()), nullptr, 0, nullptr,
-    nullptr);
-  if(size > 0) {
-    ret.resize(toU64(size) + 1u);
+    CP_UTF8, WC_ERR_INVALID_CHARS, str.data(), inputSize, nullptr, 0,
+    nullptr, nullptr);
+  if(size <= 0) throw std::runtime_error("Invalid wide string");
+  Str ret(static_cast<u64>(size), '\0');
+  if(
     WideCharToMultiByte(
-      CP_UTF8, 0, str.data(), toI32(str.size()), &ret[0], size, nullptr,
-      nullptr);
-  }
-#else
-  ret.resize(wcstombs(&ret[0], str.c_str(), ret.size())); // TODO
-#endif
+      CP_UTF8, WC_ERR_INVALID_CHARS, str.data(), inputSize, ret.data(),
+      size, nullptr, nullptr) != size)
+    throw std::runtime_error("Failed to convert wide string");
   return ret;
+#else
+  Str result;
+  result.reserve(str.size());
+  for(const wchar_t value: str)
+    appendUtf8Codepoint(result, static_cast<u32>(value));
+  return result;
+#endif
 }
 
 inline void strCpy(char* dst, u64 size, const char* src)
 {
-#ifdef VD_OS_WINDOWS
-  strcpy_s(dst, size, src);
-#else
-  VD_UNUSED(size);
-  strcpy(dst, src);
-#endif
+  if(!dst || !src || size == 0u)
+    throw std::invalid_argument("String copy arguments are invalid");
+  const u64 length = std::strlen(src);
+  if(length >= size)
+    throw std::length_error("String does not fit the destination buffer");
+  std::memcpy(dst, src, static_cast<size_t>(length + 1u));
 }
 
 template<typename Ex, typename... Args>
@@ -317,7 +425,14 @@ inline Arr<u8> getBytes(const fs::path& path)
   std::ifstream stream(path, std::ios::binary | std::ios::ate);
   if(!stream) return {};
 
-  auto size = toU64(stream.tellg());
+  const auto end = stream.tellg();
+  if(end < 0)
+    throw std::runtime_error("Cannot determine file size");
+  const u64 size = static_cast<u64>(end);
+  if(
+    size > static_cast<u64>(std::numeric_limits<size_t>::max()) ||
+    size > static_cast<u64>(std::numeric_limits<std::streamsize>::max()))
+    throw std::length_error("File is too large to read");
 
   Arr<u8> result;
   result.resize(size);
@@ -326,6 +441,8 @@ inline Arr<u8> getBytes(const fs::path& path)
   stream.read(
     reinterpret_cast<char*>(result.data()),
     static_cast<std::streamsize>(size));
+  if(stream.gcount() != static_cast<std::streamsize>(size))
+    throw std::runtime_error("File ended before its declared size");
 
   return result;
 }
@@ -356,40 +473,55 @@ inline constexpr u32 fourCC(const char* s)
 }
 
 template<typename T>
-inline void streamRead(std::istream& s)
+inline T streamRead(std::istream& s)
 {
-  T v;
+  static_assert(std::is_trivially_copyable_v<T>);
+  T v{};
   s.read(reinterpret_cast<char*>(&v), sizeof(T));
+  if(s.gcount() != static_cast<std::streamsize>(sizeof(T)))
+    throw std::runtime_error("Stream ended before the requested value");
   return v;
 }
 
 inline u64 streamSize(std::istream& s)
 {
-  auto pos = s.tellg();
+  const auto pos = s.tellg();
+  if(pos < 0)
+    throw std::runtime_error("Cannot determine stream position");
   s.seekg(0, std::ios::end);
-  auto size = toU64(s.tellg());
+  const auto end = s.tellg();
+  if(end < 0) {
+    s.clear();
+    s.seekg(pos);
+    throw std::runtime_error("Cannot determine stream size");
+  }
   s.seekg(pos);
-  return size;
+  return static_cast<u64>(end);
 }
 
 inline Arr<u8> streamReadBytes(std::istream& s, u64 size)
 {
-  Arr<u8> v(size);
+  if(size > static_cast<u64>(std::numeric_limits<std::streamsize>::max()))
+    throw std::length_error("Stream read size is too large");
+  Arr<u8> v(static_cast<size_t>(size));
   s.read(
     reinterpret_cast<char*>(v.data()),
     static_cast<std::streamsize>(size));
+  if(s.gcount() != static_cast<std::streamsize>(size))
+    throw std::runtime_error("Stream ended before the requested byte count");
   return v;
 }
 
 inline Arr<u8> streamReadBytes(std::istream& s)
 {
-  auto size = streamSize(s);
-
-  Arr<u8> v(size);
-  s.read(
-    reinterpret_cast<char*>(v.data()),
-    static_cast<std::streamsize>(size));
-  return v;
+  const auto position = s.tellg();
+  if(position < 0)
+    throw std::runtime_error("Cannot determine stream position");
+  const u64 size = streamSize(s);
+  const u64 offset = static_cast<u64>(position);
+  if(offset > size)
+    throw std::runtime_error("Stream position exceeds its size");
+  return streamReadBytes(s, size - offset);
 }
 
 inline Str u8strToStr(const std::u8string& u8str)
@@ -403,65 +535,97 @@ inline Str pathToStr(const fs::path& path)
 }
 
 template<typename T>
-inline T alignUp(T val, T alignment)
+inline constexpr T alignUp(T val, T alignment)
 {
+  if(
+    alignment == 0u ||
+    (alignment & (alignment - static_cast<T>(1))) != 0u)
+    throw std::invalid_argument("Alignment must be a non-zero power of two");
+  if(val > std::numeric_limits<T>::max() - (alignment - 1u))
+    throw std::overflow_error("Aligned value overflows");
   return (val + alignment - static_cast<T>(1)) &
          ~(alignment - static_cast<T>(1));
 }
 
 template<typename T>
-inline T alignDown(T val, T alignment)
+inline constexpr T alignDown(T val, T alignment)
 {
+  if(
+    alignment == 0u ||
+    (alignment & (alignment - static_cast<T>(1))) != 0u)
+    throw std::invalid_argument("Alignment must be a non-zero power of two");
   return val & ~(alignment - static_cast<T>(1));
 }
 
 template<typename T>
-inline T divideRoundingUp(T a, T b)
+inline constexpr T divideRoundingUp(T a, T b)
 {
-  return (a + b - static_cast<T>(1)) / b;
+  if(b == 0u) throw std::invalid_argument("Cannot divide by zero");
+  return a / b + static_cast<T>(a % b != 0u);
 }
 
-// TODO: there are much faster implementations.
 inline Arr<u8> decodeBase64(Strv data)
 {
-  constexpr SArr<i8, 256> table = {
-    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  // 10
-    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  // 20
-    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  // 30
-    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  // 40
-    0,  0,  0,  62, 0,  0,  0,  63, 52, 53, // 50
-    54, 55, 56, 57, 58, 59, 60, 61, 0,  0,  // 60
-    0,  0,  0,  0,  0,  0,  1,  2,  3,  4,  // 70
-    5,  6,  7,  8,  9,  10, 11, 12, 13, 14, // 80
-    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, // 90
-    25, 0,  0,  0,  0,  0,  0,  26, 27, 28, // 100
-    29, 30, 31, 32, 33, 34, 35, 36, 37, 38, // 110
-    39, 40, 41, 42, 43, 44, 45, 46, 47, 48, // 120
-    49, 50, 51};
-
   Arr<u8> out;
+  out.reserve((data.size() * 3u) / 4u);
 
-  i8 v1 = 0;
-  i8 v2 = -8;
-  for(auto c: data) {
-    v1 = toI8(v1 << 6) + table[toU64(c)];
-    v2 += 6;
-    if(v2 >= 0) {
-      out.push_back(toU8((v1 >> v2) & 0xFF));
-      v2 -= 8;
+  u32  accumulator = 0u;
+  u32  bitCount    = 0u;
+  u32  symbols     = 0u;
+  u32  padding     = 0u;
+  bool sawPadding  = false;
+
+  for(unsigned char c: data) {
+    if(std::isspace(c)) continue;
+    ++symbols;
+
+    if(c == '=') {
+      sawPadding = true;
+      if(++padding > 2u)
+        throw std::runtime_error("Base64: invalid padding");
+      continue;
+    }
+    if(sawPadding)
+      throw std::runtime_error("Base64: data after padding");
+
+    u32 value = 0u;
+    if(c >= 'A' && c <= 'Z') value = c - 'A';
+    else if(c >= 'a' && c <= 'z')
+      value = c - 'a' + 26u;
+    else if(c >= '0' && c <= '9')
+      value = c - '0' + 52u;
+    else if(c == '+')
+      value = 62u;
+    else if(c == '/')
+      value = 63u;
+    else
+      throw std::runtime_error("Base64: invalid character");
+
+    accumulator = (accumulator << 6u) | value;
+    bitCount += 6u;
+    if(bitCount >= 8u) {
+      bitCount -= 8u;
+      out.push_back(toU8((accumulator >> bitCount) & 0xffu));
     }
   }
+
+  if(
+    symbols % 4u == 1u ||
+    (padding != 0u && symbols % 4u != 0u) ||
+    (padding == 1u && bitCount != 2u) ||
+    (padding == 2u && bitCount != 4u) ||
+    (bitCount != 0u &&
+     (accumulator & ((1u << bitCount) - 1u)) != 0u))
+    throw std::runtime_error("Base64: invalid length or padding");
 
   return out;
 }
 
 inline constexpr u64 getAlignmentDiff(u64 address, u64 alignment)
 {
-  if(alignment == 0u || alignment == 1u) return address;
-
-  const auto alignedAddress =
-    (address + alignment - 1u) & ~(alignment - 1u);
-  return alignedAddress - address;
+  if(alignment <= 1u) return 0u;
+  const u64 remainder = address % alignment;
+  return remainder == 0u ? 0u : alignment - remainder;
 }
 
 template<typename T>

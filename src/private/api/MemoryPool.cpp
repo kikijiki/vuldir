@@ -7,11 +7,20 @@ using namespace vd;
 
 MemoryPool::Allocation MemoryPool::Allocate(u64 size, u64 alignment)
 {
+  std::scoped_lock lock(m_mutex);
+
   if(!m_handle) {
     VDLogW(
       "[MemoryPool %s] Device memory allocation of size %llu failed: "
       "invalid memory pool",
       m_name.c_str(), size);
+    return {};
+  }
+
+  if(size == 0u || alignment == 0u) {
+    VDLogW(
+      "[MemoryPool %s] Allocation size and alignment must be non-zero",
+      m_name.c_str());
     return {};
   }
 
@@ -31,12 +40,14 @@ MemoryPool::Allocation MemoryPool::Allocate(u64 size, u64 alignment)
     return {};
   }
 
-  auto blockIt = std::find_if(
-    m_freeBlocks.begin(), m_freeBlocks.end(),
-    [size, alignment](const Block& block) {
-      const auto offset = vd::getAlignmentDiff(block.offset, alignment);
-      return block.size >= (size + offset);
-    });
+  // Best fit by linear scan; the free list is not kept sorted.
+  auto blockIt = m_freeBlocks.end();
+  for(auto it = m_freeBlocks.begin(); it != m_freeBlocks.end(); ++it) {
+    const auto padding = vd::getAlignmentDiff(it->offset, alignment);
+    if(padding > it->size || size > it->size - padding) continue;
+    if(blockIt == m_freeBlocks.end() || it->size < blockIt->size)
+      blockIt = it;
+  }
 
   if(blockIt == m_freeBlocks.end()) {
     VDLogW(
@@ -87,6 +98,8 @@ MemoryPool::Allocation MemoryPool::Allocate(u64 size, u64 alignment)
 
 void MemoryPool::Free(const Allocation& allocation)
 {
+  std::scoped_lock lock(m_mutex);
+
   if(allocation.pool != this)
     throw std::runtime_error(
       "Trying to free an allocation from a different memory pool");
@@ -136,7 +149,7 @@ void MemoryPool::pushFreeBlock(const Block& newBlock)
     m_freeBlocks.push_back(newBlock);
   }
 
-  sortFreeBlocks();
+  updateMaxAllocSize();
 
   m_freeSize += newBlock.size;
   m_usedSize -= newBlock.size;
@@ -148,23 +161,14 @@ void MemoryPool::deleteFreeBlock(const Arr<Block>::iterator& blockIt)
   m_usedSize += blockIt->size;
 
   m_freeBlocks.erase(blockIt);
-  sortFreeBlocks();
+  updateMaxAllocSize();
 }
 
-void MemoryPool::sortFreeBlocks()
+void MemoryPool::updateMaxAllocSize()
 {
-  if(m_freeBlocks.empty()) {
-    m_maxAllocSize = 0u;
-    return;
-  }
-
-  std::sort(
-    m_freeBlocks.begin(), m_freeBlocks.end(),
-    [](const Block& lhs, const Block& rhs) {
-      return lhs.size < rhs.size;
-    });
-
-  m_maxAllocSize = m_freeBlocks.back().size;
+  m_maxAllocSize = 0u;
+  for(const auto& block: m_freeBlocks)
+    m_maxAllocSize = std::max(m_maxAllocSize, block.size);
 }
 
 void MemoryPool::logDetailedUsage()

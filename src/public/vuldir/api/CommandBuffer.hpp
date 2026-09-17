@@ -7,13 +7,11 @@ namespace vd {
 
 class Device;
 class Buffer;
-// class Image;
+class Pipeline;
 
 struct CommandPool {
   CommandPool(Device& device, QueueType type);
   ~CommandPool();
-
-  void Reset();
 
   Device&   device;
   QueueType type;
@@ -24,13 +22,23 @@ struct CommandPool {
   ComPtr<ID3D12CommandAllocator> handle;
   D3D12_COMMAND_LIST_TYPE        dxType;
 #endif
+
+private:
+  friend class CommandBuffer;
+  void Reset();
 };
 
 class CommandBuffer
 {
 public:
+  static constexpr u64 PushConstantsSize = 16u;
+
   enum class State { Ready, Closed, Recording };
 
+  // Attachment::state is the state expected at BeginRendering (selects
+  // the imageLayout on Vulkan) and must match the barrier the caller
+  // issued. The render area always covers the attachments; use
+  // SetScissor to restrict draws.
   struct Attachment {
     const Image::View* view         = nullptr;
     ResourceState      state        = ResourceState::Undefined;
@@ -54,7 +62,9 @@ public:
   ID3D12GraphicsCommandList5& GetHandle() { return *m_handle.Get(); }
 #endif
 
-  void Reset(bool resetPool = false);
+  State GetState() const { return m_state; }
+
+  void Reset();
   void Begin();
   void End();
 
@@ -67,7 +77,9 @@ public:
   template<typename T>
   void PushConstants(const T& data)
   {
-    static_assert(std::alignment_of<T>::value % sizeof(u32) == 0u);
+    static_assert(std::is_trivially_copyable_v<T>);
+    static_assert(sizeof(T) % sizeof(u32) == 0u);
+    static_assert(sizeof(T) <= PushConstantsSize);
     Span<u32 const> span{
       reinterpret_cast<const u32*>(&data), sizeof(T) / sizeof(u32)};
     PushConstants(span);
@@ -84,19 +96,11 @@ public:
   void DrawIndexed(
     u32 vertexCount, u32 instanceCount = 1u, u32 indexOffset = 0u,
     u32 vertexOffset = 0u, u32 instanceOffset = 0u);
+  void Dispatch(u32 groupCountX, u32 groupCountY = 1u, u32 groupCountZ = 1u);
 
   void AddBarrier();
   void AddBarrier(Buffer& res, ResourceState dstState);
   void AddBarrier(Image& res, ResourceState dstState);
-
-#ifdef VD_API_VK
-  void AddBarrier(
-    Buffer& res, ResourceState dstState, uint32_t srcQueue,
-    uint32_t dstQueue);
-  void AddBarrier(
-    Image& res, ResourceState dstState, uint32_t srcQueue,
-    uint32_t dstQueue);
-#endif
 
   void FlushBarriers();
 
@@ -110,23 +114,36 @@ public:
   QueueType GetQueueType() const { return m_pool.type; }
 
 private:
+  friend class Device;
+  friend class Pipeline;
+  friend class RenderContext;
+
+  void          reset(bool resetPool);
+  ResourceState getState(Buffer& res) const;
+  ResourceState getState(Image& res) const;
+  void          commitResourceStates();
+  void          requireRecording(const char* operation) const;
+
   struct Barriers {
 #ifdef VD_API_VK
     Arr<VkMemoryBarrier2> memoryBarriers;
-
-    Arr<Buffer*>                buffers;
-    Arr<ResourceState>          bufferStates;
     Arr<VkBufferMemoryBarrier2> bufferBarriers;
-
-    Arr<Image*>                images;
-    Arr<ResourceState>         imageStates;
     Arr<VkImageMemoryBarrier2> imageBarriers;
 #elif VD_API_DX
-    using Resource = Var<std::monostate, Buffer*, Image*>;
-    Arr<Resource>               resources;
-    Arr<ResourceState>          states;
     Arr<D3D12_RESOURCE_BARRIER> barriers;
 #endif
+
+    struct PendingState {
+      ResourceState initial;
+      ResourceState final;
+    };
+
+    // State as seen while recording. Survives FlushBarriers() and is
+    // published to resources after submission. The initial state lets
+    // Device reject a stale recording if another command buffer committed
+    // first.
+    Map<Buffer*, PendingState> pendingBuffers;
+    Map<Image*, PendingState>  pendingImages;
   };
 
 private:
@@ -134,11 +151,14 @@ private:
   CommandPool& m_pool;
 
   State    m_state;
+  BindPoint m_bindPoint;
+  bool      m_pipelineBound;
+  bool      m_indexBufferBound;
+  bool      m_rendering;
   Barriers m_barriers;
 
 #ifdef VD_API_VK
   VkCommandBuffer m_handle;
-  VkRect2D        m_renderArea;
 #elif VD_API_DX
   ComPtr<ID3D12GraphicsCommandList5> m_handle;
 #endif

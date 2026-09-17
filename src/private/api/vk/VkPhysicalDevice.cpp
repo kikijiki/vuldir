@@ -1,4 +1,5 @@
 #include "vuldir/api/PhysicalDevice.hpp"
+#include "vuldir/api/vk/VkUti.hpp"
 
 using namespace vd;
 
@@ -20,11 +21,8 @@ PhysicalDevice::PhysicalDevice(Dispatcher& vk, VkPhysicalDevice handle):
   m_vk.GetPhysicalDeviceQueueFamilyProperties2(
     m_handle, &queueFamilyCount, m_queueFamilies.data());
 
-  // Properties
   vk.GetPhysicalDeviceProperties2(m_handle, &m_properties.properties);
-  // Features
   vk.GetPhysicalDeviceFeatures2(m_handle, &m_features.features);
-  // Memory properties
   m_vk.GetPhysicalDeviceMemoryProperties2(
     m_handle, &m_memoryProperties.properties);
 }
@@ -34,18 +32,15 @@ PhysicalDevice::~PhysicalDevice() {}
 Str PhysicalDevice::GetDescription() const
 {
   return m_properties->deviceName;
-  // return vd::formatString(
-  //  "vendor id: %u, api version: %u, driver version: %u",
-  //  m_properties->vendorID,
-  //  m_properties->apiVersion,
-  //  m_properties->driverVersion);
 }
 
 u64 PhysicalDevice::GetDedicatedMemorySize() const
 {
   u64 totalSize = 0u;
   for(u32 idx = 0u; idx < m_memoryProperties->memoryHeapCount; ++idx) {
-    totalSize += m_memoryProperties->memoryHeaps[idx].size;
+    const auto& heap = m_memoryProperties->memoryHeaps[idx];
+    if(vd::hasFlag(heap.flags, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT))
+      totalSize += heap.size;
   }
   return totalSize;
 }
@@ -70,20 +65,20 @@ VkSurfaceCapabilitiesKHR
 PhysicalDevice::GetPresentCapabilities(VkSurfaceKHR surface) const
 {
   VkSurfaceCapabilitiesKHR capabilities{};
-  m_vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(
-    m_handle, surface, &capabilities);
+  VDVkTry(m_vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(
+    m_handle, surface, &capabilities));
   return capabilities;
 }
 
 Arr<VkSurfaceFormatKHR>
 PhysicalDevice::GetPresentFormats(VkSurfaceKHR surface) const
 {
-  u32 formatCount;
-  m_vk.GetPhysicalDeviceSurfaceFormatsKHR(
-    m_handle, surface, &formatCount, nullptr);
+  u32 formatCount = 0u;
+  VDVkTry(m_vk.GetPhysicalDeviceSurfaceFormatsKHR(
+    m_handle, surface, &formatCount, nullptr));
   Arr<VkSurfaceFormatKHR> formats(formatCount);
-  m_vk.GetPhysicalDeviceSurfaceFormatsKHR(
-    m_handle, surface, &formatCount, formats.data());
+  VDVkTry(m_vk.GetPhysicalDeviceSurfaceFormatsKHR(
+    m_handle, surface, &formatCount, formats.data()));
   return formats;
 }
 
@@ -108,12 +103,12 @@ bool PhysicalDevice::IsPresentFormatSupported(
 Arr<VkPresentModeKHR>
 PhysicalDevice::GetPresentModes(VkSurfaceKHR surface) const
 {
-  u32 modesCount;
-  m_vk.GetPhysicalDeviceSurfacePresentModesKHR(
-    m_handle, surface, &modesCount, nullptr);
+  u32 modesCount = 0u;
+  VDVkTry(m_vk.GetPhysicalDeviceSurfacePresentModesKHR(
+    m_handle, surface, &modesCount, nullptr));
   Arr<VkPresentModeKHR> modes(modesCount);
-  m_vk.GetPhysicalDeviceSurfacePresentModesKHR(
-    m_handle, surface, &modesCount, modes.data());
+  VDVkTry(m_vk.GetPhysicalDeviceSurfacePresentModesKHR(
+    m_handle, surface, &modesCount, modes.data()));
   return modes;
 }
 
@@ -147,7 +142,13 @@ bool PhysicalDevice::HasRequiredFeatures(
          m_features.descriptorIndexing
              .descriptorBindingVariableDescriptorCount == VK_TRUE &&
          m_features.descriptorIndexing
-             .descriptorBindingPartiallyBound == VK_TRUE;
+             .descriptorBindingPartiallyBound == VK_TRUE &&
+         m_features.descriptorIndexing
+             .descriptorBindingSampledImageUpdateAfterBind == VK_TRUE &&
+         m_features.descriptorIndexing
+             .descriptorBindingStorageImageUpdateAfterBind == VK_TRUE &&
+         m_features.descriptorIndexing
+             .descriptorBindingStorageBufferUpdateAfterBind == VK_TRUE;
 }
 
 u32 PhysicalDevice::GetQueueFamilyCount() const
@@ -169,9 +170,9 @@ bool PhysicalDevice::HasGraphics(u32 index) const
 
 bool PhysicalDevice::HasPresent(u32 index, VkSurfaceKHR surface) const
 {
-  VkBool32 hasPresent;
-  m_vk.GetPhysicalDeviceSurfaceSupportKHR(
-    m_handle, index, surface, &hasPresent);
+  VkBool32 hasPresent = VK_FALSE;
+  VDVkTry(m_vk.GetPhysicalDeviceSurfaceSupportKHR(
+    m_handle, index, surface, &hasPresent));
   return hasPresent == VK_TRUE;
 }
 

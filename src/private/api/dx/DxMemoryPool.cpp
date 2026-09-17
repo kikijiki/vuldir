@@ -14,11 +14,14 @@ MemoryPool::MemoryPool(
   m_desc{},
   m_handle{},
   m_freeBlocks{},
+  m_mutex{},
   m_capacity{capacity},
   m_usedSize{capacity},
   m_freeSize{0u},
   m_maxAllocSize{0u}
 {
+  if(capacity == 0u)
+    throw std::invalid_argument("Memory pool capacity must be non-zero");
   m_desc.SizeInBytes = m_capacity;
   m_desc.Alignment   = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
   m_desc.Flags       = D3D12_HEAP_FLAG_NONE;

@@ -12,9 +12,11 @@ using namespace vd;
 
 struct QueueInfo {
   Arr<VkDeviceQueueCreateInfo> CIs;
+  SArr<u32, QueueTypeCount>    families = {};
+  SArr<u32, QueueTypeCount>    indices  = {};
 
-  static constexpr SArr<f32, QueueTypeCount> priorities = {
-    1.0f, 1.0f, 1.0f};
+  // Enough slots for up to QueueTypeCount queues per unique family.
+  SArr<f32, QueueTypeCount> priorities = {1.0f, 1.0f, 1.0f};
 };
 
 QueueInfo makeQueueInfo(
@@ -23,6 +25,20 @@ QueueInfo makeQueueInfo(
 bool checkLayerExtensionSupport(
   Dispatcher& vk, const Arr<const char*>& requiredLayers,
   const Arr<const char*>& requiredExtensions);
+
+namespace {
+u32 getPhysicalDevicePreference(VkPhysicalDeviceType type)
+{
+  switch(type) {
+    case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 4u;
+    case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return 3u;
+    case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: return 2u;
+    case VK_PHYSICAL_DEVICE_TYPE_CPU: return 1u;
+    case VK_PHYSICAL_DEVICE_TYPE_OTHER:
+    default: return 0u;
+  }
+}
+} // namespace
 
 Device::Device(const Desc& desc, const Swapchain::Desc& swapchainDesc):
   m_desc{desc},
@@ -39,16 +55,39 @@ Device::Device(const Desc& desc, const Swapchain::Desc& swapchainDesc):
   m_handle{},
   m_surface{}
 {
-  create_api(desc);
-  create_physicalDevice(desc);
-  create_device(desc);
+  try {
+    create_api(desc);
+    create_physicalDevice(desc);
+    create_device(desc);
 
-  m_swapchain = std::make_unique<Swapchain>(*this, swapchainDesc);
+    m_swapchain = std::make_unique<Swapchain>(*this, swapchainDesc);
+  } catch(...) {
+    // A throwing constructor does not run Device::~Device. Tear down only
+    // the objects whose handles have already been published by each stage.
+    m_swapchain = nullptr;
+    m_binder    = nullptr;
+    m_memoryPools.clear();
+    if(m_dispatcher) {
+      if(m_surface) m_dispatcher->DestroySurfaceKHR(m_surface);
+      if(m_handle) m_dispatcher->DestroyDevice(m_handle);
+      if(m_instance) m_dispatcher->DestroyInstance(m_instance);
+    }
+    m_surface        = nullptr;
+    m_handle         = nullptr;
+    m_instance       = nullptr;
+    m_physicalDevice = nullptr;
+    throw;
+  }
 }
 
 Device::~Device()
 {
   // Order is important here.
+  try {
+    WaitIdle();
+  } catch(const std::exception& error) {
+    VDLogE("Device teardown could not wait for idle: %s", error.what());
+  }
 
   m_swapchain = nullptr; // Must go before destroying binder.
   m_binder    = nullptr;
@@ -69,8 +108,8 @@ Device::~Device()
 VkSurfaceCapabilitiesKHR Device::GetSurfaceCapabilities() const
 {
   VkSurfaceCapabilitiesKHR cap = {};
-  m_dispatcher->GetPhysicalDeviceSurfaceCapabilitiesKHR(
-    m_physicalDevice->GetHandle(), m_surface, &cap);
+  VDVkTry(m_dispatcher->GetPhysicalDeviceSurfaceCapabilitiesKHR(
+    m_physicalDevice->GetHandle(), m_surface, &cap));
   return cap;
 }
 
@@ -98,37 +137,74 @@ void Device::Submit(
   Fence* submitFence, SwapchainDep swapchainDep)
 {
   if(cmds.size() == 0u) return;
+  if(!cmds[0])
+    throw std::invalid_argument("Cannot submit a null command buffer");
 
   const auto  queueType = cmds[0]->GetQueueType();
   const auto& queue     = m_queues[enumValue(queueType)];
+  std::scoped_lock queueLock(*queue.mutex);
+  std::scoped_lock stateLock(m_resourceStateMutex);
 
   Arr<VkCommandBufferSubmitInfo> vkCmdInfos;
   Arr<VkSemaphoreSubmitInfo>     vkWaitSemInfos;
   Arr<VkSemaphoreSubmitInfo>     vkSignalSemInfos;
 
-  //VDLogV(
-  //  "Submitting %zu command buffers on queue %s", cmds.size(),
-  //  queue.name.c_str());
-
   for(auto& cmd: cmds) {
+    if(!cmd)
+      throw std::invalid_argument("Cannot submit a null command buffer");
     if(cmd->GetQueueType() != queueType)
       throw std::runtime_error("Command buffer queue mismatch");
+    if(&cmd->m_device != this)
+      throw std::invalid_argument(
+        "Command buffer belongs to a different device");
+    if(cmd->GetState() != CommandBuffer::State::Closed)
+      throw std::runtime_error(
+        "Only closed command buffers can be submitted");
 
-    vkCmdInfos.push_back(VkCommandBufferSubmitInfo{
-      .sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-      .pNext         = nullptr,
-      .commandBuffer = cmd->GetHandle(),
-      .deviceMask    = 0});
+    vkCmdInfos.push_back(
+      VkCommandBufferSubmitInfo{
+        .sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+        .pNext         = nullptr,
+        .commandBuffer = cmd->GetHandle(),
+        .deviceMask    = 0});
   }
+  validateResourceStates(cmds);
+
+  for(const auto* wait: waits) {
+    if(!wait)
+      throw std::invalid_argument("Cannot wait on a null fence");
+    if(&wait->m_device != this)
+      throw std::invalid_argument("Wait fence belongs to a different device");
+    if(wait->GetType() == Fence::Type::Fence)
+      throw std::invalid_argument("Cannot queue-wait on a Vulkan fence");
+  }
+  for(const auto* signal: signals) {
+    if(!signal)
+      throw std::invalid_argument("Cannot signal a null fence");
+    if(&signal->m_device != this)
+      throw std::invalid_argument(
+        "Signal fence belongs to a different device");
+    if(signal->GetType() == Fence::Type::Fence)
+      throw std::invalid_argument("Cannot queue-signal a Vulkan fence");
+    if(std::ranges::count(signals, signal) > 1)
+      throw std::invalid_argument("A fence cannot be signaled twice in one submit");
+  }
+  if(submitFence && &submitFence->m_device != this)
+    throw std::invalid_argument(
+      "Submit fence belongs to a different device");
+  if(submitFence && submitFence->GetType() != Fence::Type::Fence)
+    throw std::invalid_argument(
+      "Vulkan submit fence must have the fence type");
 
   for(auto& wait: waits) {
-    vkWaitSemInfos.push_back(VkSemaphoreSubmitInfo{
-      .sType       = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-      .pNext       = nullptr,
-      .semaphore   = wait->GetSemaphoreHandle(),
-      .value       = wait->GetTarget(),
-      .stageMask   = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-      .deviceIndex = 0});
+    vkWaitSemInfos.push_back(
+      VkSemaphoreSubmitInfo{
+        .sType       = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        .pNext       = nullptr,
+        .semaphore   = wait->GetSemaphoreHandle(),
+        .value       = wait->GetTarget(),
+        .stageMask   = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+        .deviceIndex = 0});
     VDLogV(
       "- Wait: %s (%llu)", wait->GetName().c_str(), wait->GetTarget());
   }
@@ -136,46 +212,54 @@ void Device::Submit(
   if(
     swapchainDep == SwapchainDep::Acquire ||
     swapchainDep == SwapchainDep::AcquireRelease) {
-    vkWaitSemInfos.push_back(VkSemaphoreSubmitInfo{
-      .sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-      .pNext     = nullptr,
-      .semaphore = m_swapchain->GetAcquireFence().GetSemaphoreHandle(),
-      .value     = 0, // Binary semaphore
-      .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-      .deviceIndex = 0});
-    //VDLogV(
-    //  "- Wait SC: %s",
-    //  m_swapchain->GetAcquireFence().GetName().c_str());
+    vkWaitSemInfos.push_back(
+      VkSemaphoreSubmitInfo{
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        .pNext = nullptr,
+        .semaphore =
+          m_swapchain->GetAcquireFence().GetSemaphoreHandle(),
+        .value       = 0, // Binary semaphore
+        .stageMask   = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .deviceIndex = 0});
   }
 
+  Arr<std::unique_lock<std::mutex>> signalTargetLocks;
+  Arr<std::pair<Fence*, u64>>       pendingSignalTargets;
+  signalTargetLocks.reserve(signals.size());
+  pendingSignalTargets.reserve(signals.size());
   for(auto& signal: signals) {
-    if(signal->GetType() == Fence::Type::Timeline) { signal->Step(); }
+    u64 signalValue = 0u;
+    if(signal->GetType() == Fence::Type::Timeline) {
+      signalTargetLocks.emplace_back(signal->m_targetMutex);
+      const u64 target = signal->m_target.load();
+      if(target == MaxU64)
+        throw std::overflow_error("Timeline fence target overflow");
+      signalValue = target + 1u;
+      pendingSignalTargets.emplace_back(signal, signalValue);
+    }
 
-    vkSignalSemInfos.push_back(VkSemaphoreSubmitInfo{
-      .sType       = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-      .pNext       = nullptr,
-      .semaphore   = signal->GetSemaphoreHandle(),
-      .value       = signal->GetTarget(),
-      .stageMask   = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-      .deviceIndex = 0});
-    //VDLogV(
-    //  "- Signal: %s (%llu)", signal->GetName().c_str(),
-    //  signal->GetTarget());
+    vkSignalSemInfos.push_back(
+      VkSemaphoreSubmitInfo{
+        .sType       = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        .pNext       = nullptr,
+        .semaphore   = signal->GetSemaphoreHandle(),
+        .value       = signalValue,
+        .stageMask   = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+        .deviceIndex = 0});
   }
 
   if(
     swapchainDep == SwapchainDep::Release ||
     swapchainDep == SwapchainDep::AcquireRelease) {
-    vkSignalSemInfos.push_back(VkSemaphoreSubmitInfo{
-      .sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-      .pNext     = nullptr,
-      .semaphore = m_swapchain->GetReleaseFence().GetSemaphoreHandle(),
-      .value     = 0, // Binary semaphore
-      .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-      .deviceIndex = 0});
-    //VDLogV(
-    //  "- Signal SC: %s",
-    //  m_swapchain->GetReleaseFence().GetName().c_str());
+    vkSignalSemInfos.push_back(
+      VkSemaphoreSubmitInfo{
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        .pNext = nullptr,
+        .semaphore =
+          m_swapchain->GetReleaseFence().GetSemaphoreHandle(),
+        .value       = 0, // Binary semaphore
+        .stageMask   = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .deviceIndex = 0});
   }
 
   VkSubmitInfo2 submitInfo{
@@ -189,22 +273,166 @@ void Device::Submit(
     .signalSemaphoreInfoCount = vd::size32(vkSignalSemInfos),
     .pSignalSemaphoreInfos    = std::data(vkSignalSemInfos)};
 
-  auto vkSubmitFence =
-    submitFence ? submitFence->GetFenceHandle() : VK_NULL_HANDLE;
+  auto vkSubmitFence = submitFence ? submitFence->GetFenceHandle()
+                                   : VK_NULL_HANDLE;
 
   VDVkTry(m_dispatcher->QueueSubmit2(
     queue.handle, 1u, &submitInfo, vkSubmitFence));
+
+  for(const auto& [fence, target]: pendingSignalTargets)
+    fence->m_target.store(target);
+  for(auto* cmd: cmds) cmd->commitResourceStates();
+}
+
+bool Device::Wait(QueueType queue, Fence& fence) const
+{
+  if(!isValid(queue))
+    throw std::invalid_argument("Queue type is invalid");
+  if(&fence.m_device != this)
+    throw std::invalid_argument(
+      "Wait fence belongs to a different device");
+  if(fence.GetType() == Fence::Type::Fence)
+    throw std::invalid_argument(
+      "A Vulkan queue cannot wait on a host fence");
+
+  const u64 value = fence.GetType() == Fence::Type::Timeline
+                      ? fence.GetTarget()
+                      : 0u;
+  const auto& queueState = m_queues[enumValue(queue)];
+  std::scoped_lock queueLock(*queueState.mutex);
+  VkSemaphoreSubmitInfo waitInfo{
+    .sType       = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+    .semaphore   = fence.GetSemaphoreHandle(),
+    .value       = value,
+    .stageMask   = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+    .deviceIndex = 0u};
+  VkSubmitInfo2 submitInfo{
+    .sType                  = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+    .waitSemaphoreInfoCount = 1u,
+    .pWaitSemaphoreInfos    = &waitInfo};
+  return m_dispatcher->QueueSubmit2(
+           queueState.handle, 1u, &submitInfo, VK_NULL_HANDLE) ==
+         VK_SUCCESS;
+}
+
+bool Device::Wait(QueueType queue, Fence& fence, u64 value) const
+{
+  if(!isValid(queue))
+    throw std::invalid_argument("Queue type is invalid");
+  if(&fence.m_device != this)
+    throw std::invalid_argument(
+      "Wait fence belongs to a different device");
+  if(fence.GetType() != Fence::Type::Timeline)
+    throw std::invalid_argument(
+      "Explicit queue wait values require a timeline fence");
+
+  const auto& queueState = m_queues[enumValue(queue)];
+  std::scoped_lock queueLock(*queueState.mutex);
+  VkSemaphoreSubmitInfo waitInfo{
+    .sType       = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+    .semaphore   = fence.GetSemaphoreHandle(),
+    .value       = value,
+    .stageMask   = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+    .deviceIndex = 0u};
+  VkSubmitInfo2 submitInfo{
+    .sType                  = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+    .waitSemaphoreInfoCount = 1u,
+    .pWaitSemaphoreInfos    = &waitInfo};
+  return m_dispatcher->QueueSubmit2(
+           queueState.handle, 1u, &submitInfo, VK_NULL_HANDLE) ==
+         VK_SUCCESS;
+}
+
+bool Device::Signal(QueueType queue, Fence& fence)
+{
+  if(!isValid(queue))
+    throw std::invalid_argument("Queue type is invalid");
+  if(&fence.m_device != this)
+    throw std::invalid_argument(
+      "Signal fence belongs to a different device");
+  if(fence.GetType() == Fence::Type::Fence)
+    throw std::invalid_argument(
+      "A Vulkan queue cannot signal a host fence");
+
+  const auto& queueState = m_queues[enumValue(queue)];
+  std::scoped_lock queueLock(*queueState.mutex);
+  std::unique_lock targetLock(fence.m_targetMutex, std::defer_lock);
+  u64 value = 0u;
+  if(fence.GetType() == Fence::Type::Timeline) {
+    targetLock.lock();
+    const u64 target = fence.m_target.load();
+    if(target == MaxU64)
+      throw std::overflow_error("Timeline fence target overflow");
+    value = target + 1u;
+  }
+
+  VkSemaphoreSubmitInfo signalInfo{
+    .sType       = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+    .semaphore   = fence.GetSemaphoreHandle(),
+    .value       = value,
+    .stageMask   = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+    .deviceIndex = 0u};
+  VkSubmitInfo2 submitInfo{
+    .sType                    = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+    .signalSemaphoreInfoCount = 1u,
+    .pSignalSemaphoreInfos    = &signalInfo};
+  if(
+    m_dispatcher->QueueSubmit2(
+      queueState.handle, 1u, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS)
+    return false;
+  if(fence.GetType() == Fence::Type::Timeline)
+    fence.m_target.store(value);
+  return true;
+}
+
+bool Device::Signal(QueueType queue, Fence& fence, u64 value)
+{
+  if(!isValid(queue))
+    throw std::invalid_argument("Queue type is invalid");
+  if(&fence.m_device != this)
+    throw std::invalid_argument(
+      "Signal fence belongs to a different device");
+  if(fence.GetType() != Fence::Type::Timeline)
+    throw std::invalid_argument(
+      "Explicit queue signal values require a timeline fence");
+
+  const auto& queueState = m_queues[enumValue(queue)];
+  std::scoped_lock queueLock(*queueState.mutex);
+  std::scoped_lock targetLock(fence.m_targetMutex);
+  if(value < fence.m_target.load())
+    throw std::invalid_argument(
+      "Timeline fence target cannot move backwards");
+
+  VkSemaphoreSubmitInfo signalInfo{
+    .sType       = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+    .semaphore   = fence.GetSemaphoreHandle(),
+    .value       = value,
+    .stageMask   = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+    .deviceIndex = 0u};
+  VkSubmitInfo2 submitInfo{
+    .sType                    = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+    .signalSemaphoreInfoCount = 1u,
+    .pSignalSemaphoreInfos    = &signalInfo};
+  if(
+    m_dispatcher->QueueSubmit2(
+      queueState.handle, 1u, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS)
+    return false;
+  fence.m_target.store(value);
+  return true;
 }
 
 void Device::WaitIdle(QueueType queue)
 {
-  m_dispatcher->QueueWaitIdle(GetQueueHandle(queue));
+  if(!isValid(queue))
+    throw std::invalid_argument("Queue type is invalid");
+  const auto& queueState = m_queues[enumValue(queue)];
+  std::scoped_lock queueLock(*queueState.mutex);
+  VDVkTry(m_dispatcher->QueueWaitIdle(queueState.handle));
 }
 
 void Device::WaitIdle()
 {
-  for(auto queue: QueueTypes)
-    m_dispatcher->QueueWaitIdle(GetQueueHandle(queue));
+  for(auto queue: QueueTypes) WaitIdle(queue);
 }
 
 void Device::create_api(const Desc& desc)
@@ -221,18 +449,6 @@ void Device::create_api(const Desc& desc)
   Arr<const char*> layers;
   Arr<const char*> extensions;
 
-  // struct VkLayerSettingEXT {
-  //     const char*              pLayerName;
-  //     const char*              pSettingName;
-  //     VkLayerSettingTypeEXT    type;
-  //     uint32_t                 valueCount;
-  //     const void*              pValues;
-  // }
-  // Arr<VkLayerSettingEXT> layerSettings;
-  //VkLayerSettingsCreateInfoEXT layerSettingsCI{
-  //  .sType = VK_STRUCTURE_TYPE_LAYER_SETTINGS_CREATE_INFO_EXT};
-  //const u32 BOOL32_TRUE = 1u;
-
   { // Debug
     if(desc.dbgEnable) {
       layers.push_back("VK_LAYER_KHRONOS_validation");
@@ -240,31 +456,6 @@ void Device::create_api(const Desc& desc)
 
       if(desc.dbgDumpLog) layers.push_back("VK_LAYER_LUNARG_api_dump");
 
-      //if(desc.dbgUseRenderdoc)
-      //  layers.push_back("VK_LAYER_RENDERDOC_Capture");
-
-      // const char* settingNames[] = {
-      //   "VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT",
-      //   "VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT",
-      //   "VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT",
-      //   "VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT"};
-
-      // for(const auto& settingName: settingNames) {
-      //   layerSettings.push_back(VkLayerSettingEXT{
-      //     .pLayerName   = "VK_LAYER_KHRONOS_validation",
-      //     .pSettingName = settingName,
-      //     .type         = VK_LAYER_SETTING_TYPE_BOOL32_EXT,
-      //     .valueCount   = 1u,
-      //     .pValues      = &BOOL32_TRUE});
-      // }
-
-      // layerSettingsCI.settingCount = vd::size32(layerSettings),
-      // layerSettingsCI.pSettings    = std::data(layerSettings);
-
-      //Deprecated by VK_EXT_layer_settings
-      //extensions.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
-
-      //extensions.push_back(VK_EXT_LAYER_SETTINGS_EXTENSION_NAME);
       extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
   }
@@ -274,7 +465,9 @@ void Device::create_api(const Desc& desc)
 
 #if defined(VD_OS_WINDOWS)
     extensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
-#elif defined(VD_OS_LINUX)
+#elif defined(VD_OS_LINUX) && defined(VD_WINDOW_WAYLAND)
+    extensions.push_back(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
+#elif defined(VD_OS_LINUX) && defined(VD_WINDOW_XCB)
     extensions.push_back(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
 #elif defined(VD_OS_ANDROID)
     extensions.push_back(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME);
@@ -295,7 +488,6 @@ void Device::create_api(const Desc& desc)
 
   VkInstanceCreateInfo instanceCI{};
   instanceCI.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-  //instanceCI.pNext             = &layerSettingsCI;
   instanceCI.pApplicationInfo        = &appInfo;
   instanceCI.enabledLayerCount       = vd::size32(layers);
   instanceCI.ppEnabledLayerNames     = std::data(layers);
@@ -306,8 +498,6 @@ void Device::create_api(const Desc& desc)
   m_dispatcher->Load(*this);
 
   // TODO: re-enable Debug stuff.
-  // if (desc.dbgEnabled)
-  //  m_debug.Attach(*this, desc.dbgLogLevel, desc.dbgDumpLog);
 }
 
 void Device::create_physicalDevice(const Desc& desc)
@@ -320,7 +510,15 @@ void Device::create_physicalDevice(const Desc& desc)
     .hinstance = m_window.hInstance,
     .hwnd      = m_window.hWnd};
   VDVkTry(m_dispatcher->CreateWin32SurfaceKHR(&ci, &m_surface));
-#elif defined(VD_OS_LINUX)
+#elif defined(VD_OS_LINUX) && defined(VD_WINDOW_WAYLAND)
+  VkWaylandSurfaceCreateInfoKHR ci{
+    .sType   = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR,
+    .pNext   = nullptr,
+    .flags   = 0u,
+    .display = m_window.display,
+    .surface = m_window.surface};
+  VDVkTry(m_dispatcher->CreateWaylandSurfaceKHR(&ci, &m_surface));
+#elif defined(VD_OS_LINUX) && defined(VD_WINDOW_XCB)
   VkXcbSurfaceCreateInfoKHR ci{
     .sType      = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR,
     .pNext      = nullptr,
@@ -348,18 +546,28 @@ void Device::create_physicalDevice(const Desc& desc)
   }
 
   { // Select physical device
-    u64 maxMemory = 0u;
+    bool hasBestDevice = false;
+    u32  bestType      = 0u;
+    u64  bestMemory    = 0u;
     for(auto& physicalDevice: physicalDevices) {
       if(!physicalDevice->HasGraphicsCapabilities()) continue;
       if(!physicalDevice->HasPresentCapabilities(m_surface)) continue;
       if(!physicalDevice->HasRequiredFeatures(
            desc.dbgEnable, desc.dbgUseRenderdoc))
         continue;
-      if(physicalDevice->GetDedicatedMemorySize() <= maxMemory)
+
+      const u32 type = getPhysicalDevicePreference(
+        physicalDevice->GetProperties()->deviceType);
+      const u64 memory = physicalDevice->GetDedicatedMemorySize();
+      if(
+        hasBestDevice &&
+        (type < bestType || (type == bestType && memory <= bestMemory)))
         continue;
 
       m_physicalDevice = std::move(physicalDevice);
-      maxMemory        = m_physicalDevice->GetDedicatedMemorySize();
+      hasBestDevice    = true;
+      bestType         = type;
+      bestMemory       = memory;
     }
   }
 
@@ -369,8 +577,21 @@ void Device::create_physicalDevice(const Desc& desc)
 
 void Device::create_device([[maybe_unused]] const Desc& desc)
 {
-  // Features
   PhysicalDevice::Features features;
+  features.features.features.samplerAnisotropy =
+    m_physicalDevice->GetFeatures()->samplerAnisotropy;
+  features.features.features.depthClamp =
+    m_physicalDevice->GetFeatures()->depthClamp;
+  features.features.features.depthBounds =
+    m_physicalDevice->GetFeatures()->depthBounds;
+  features.features.features.fillModeNonSolid =
+    m_physicalDevice->GetFeatures()->fillModeNonSolid;
+  features.features.features.wideLines =
+    m_physicalDevice->GetFeatures()->wideLines;
+  features.features.features.alphaToOne =
+    m_physicalDevice->GetFeatures()->alphaToOne;
+  features.features.features.logicOp =
+    m_physicalDevice->GetFeatures()->logicOp;
   features.timeline.timelineSemaphore        = VK_TRUE;
   features.synchronization2.synchronization2 = VK_TRUE;
   features.dynamicRendering.dynamicRendering = VK_TRUE;
@@ -380,18 +601,22 @@ void Device::create_device([[maybe_unused]] const Desc& desc)
   features.descriptorIndexing.descriptorBindingVariableDescriptorCount =
     VK_TRUE;
   features.descriptorIndexing.descriptorBindingPartiallyBound = VK_TRUE;
+  features.descriptorIndexing
+    .descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+  features.descriptorIndexing
+    .descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
+  features.descriptorIndexing
+    .descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
 
   if(m_desc.dbgUseRenderdoc) {
     features.bufferDeviceAddress.bufferDeviceAddressCaptureReplay =
       VK_TRUE;
   }
 
-  // Extensions
   Arr<const char*> extensions;
   extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   extensions.push_back(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
 
-  // Queues
   const auto queueInfo = makeQueueInfo(*m_physicalDevice, m_surface);
 
   VkDeviceCreateInfo deviceCI{};
@@ -422,22 +647,27 @@ void Device::create_device([[maybe_unused]] const Desc& desc)
     }
   };
 
-  // Queues
-  u32 queueIdx = 0u;
-  for(auto& info: queueInfo.CIs) {
-    for(u32 idx = 0u; idx < info.queueCount; ++idx) {
-      auto& queue = m_queues[queueIdx];
-      auto  name =
-        formatString("%s queue %u", queueTypeStr(queueIdx), idx);
+  for(u32 queueIdx = 0u; queueIdx < QueueTypeCount; ++queueIdx) {
+    auto& queue = m_queues[queueIdx];
+    auto  name  = formatString(
+      "%s queue %u", queueTypeStr(queueIdx),
+      queueInfo.indices[queueIdx]);
 
-      queue.name   = name;
-      queue.family = info.queueFamilyIndex;
-      queue.index  = idx;
-      m_dispatcher->GetDeviceQueue(
-        info.queueFamilyIndex, idx, &queue.handle);
-
-      queueIdx++;
+    queue.name   = name;
+    queue.family = queueInfo.families[queueIdx];
+    queue.index  = queueInfo.indices[queueIdx];
+    queue.mutex  = std::make_shared<std::recursive_mutex>();
+    for(u32 previousIdx = 0u; previousIdx < queueIdx; ++previousIdx) {
+      const auto& previous = m_queues[previousIdx];
+      if(
+        previous.family == queue.family &&
+        previous.index == queue.index) {
+        queue.mutex = previous.mutex;
+        break;
+      }
     }
+    m_dispatcher->GetDeviceQueue(
+      queue.family, queue.index, &queue.handle);
   }
 
   m_binder = std::make_unique<Binder>(*this, Binder::Desc{});
@@ -469,10 +699,11 @@ bool checkLayerExtensionSupport(
     for(auto& layer: layers) {
       u32 layerExtensionCount = 0u;
       VDVkTry(vk.EnumerateInstanceExtensionProperties(
-        layer.layerName, &extensionCount, nullptr));
+        layer.layerName, &layerExtensionCount, nullptr));
       Arr<VkExtensionProperties> layerExtensions(layerExtensionCount);
       VDVkTry(vk.EnumerateInstanceExtensionProperties(
-        layer.layerName, &extensionCount, layerExtensions.data()));
+        layer.layerName, &layerExtensionCount, layerExtensions.data()));
+      layerExtensions.resize(layerExtensionCount);
       for(auto& extension: layerExtensions) {
         extensions.push_back(extension);
       }
@@ -541,104 +772,85 @@ QueueInfo makeQueueInfo(
 
   Opt<u32> graphicsFamily;
   Opt<u32> computeFamily;
-  Opt<u32> transferFamily;
 
-  // I make the following simplifying assumptions:
-  // - presentQueue == graphicsQueue
-  // - transfers are executed on a graphics or compute queue.
-  // From the spec:
-  // All commands that are allowed on a queue that supports transfer
-  // operations are also allowed on a queue that supports either
-  // graphics or compute operations. Thus, if the capabilities of a
-  // queue family include VK_QUEUE_GRAPHICS_BIT or VK_QUEUE_COMPUTE_BIT,
-  // then reporting the VK_QUEUE_TRANSFER_BIT capability separately for
-  // that queue family is optional.
+  // Prefer dedicated families. Some GPUs expose one queue per family, so
+  // consuming a compute+transfer family for transfer could leave compute
+  // unassigned.
   for(u32 familyIdx{0u};
       familyIdx < physicalDevice.GetQueueFamilyCount(); familyIdx++) {
-    u32 queuesLeft = physicalDevice.GetQueueFamily(familyIdx)
-                       .queueFamilyProperties.queueCount;
-
-    // Graphics+Present
     if(
       !graphicsFamily && physicalDevice.HasGraphics(familyIdx) &&
       physicalDevice.HasPresent(familyIdx, surface)) {
       graphicsFamily = familyIdx;
-      queuesLeft--;
-      if(queuesLeft == 0u) continue;
     }
 
-    // Initialize if unassigned, might find something better later.
-    if(!transferFamily && physicalDevice.HasTransfer(familyIdx)) {
-      transferFamily = familyIdx;
-      queuesLeft--;
-      if(queuesLeft == 0u) continue;
-    }
-
-    // Compute
-    if(!computeFamily && physicalDevice.HasCompute(familyIdx)) {
-      computeFamily = familyIdx;
-      queuesLeft--;
-      if(queuesLeft == 0u) continue;
-    }
-
-    // Exclusive transfer
     if(
-      physicalDevice.HasTransfer(familyIdx) &&
-      !physicalDevice.HasGraphics(familyIdx) &&
-      !physicalDevice.HasCompute(familyIdx)) {
-      transferFamily = familyIdx;
-      queuesLeft--;
-      if(queuesLeft == 0u) continue;
+      physicalDevice.HasCompute(familyIdx) &&
+      !physicalDevice.HasGraphics(familyIdx)) {
+      computeFamily = familyIdx;
     }
+
   }
 
   if(!graphicsFamily)
     throw std::runtime_error("No graphics queue family found");
-  if(!computeFamily)
-    throw std::runtime_error("No compute queue family found");
-  if(!transferFamily)
-    throw std::runtime_error("No transfer queue family found");
 
-  VkDeviceQueueCreateInfo queueCI{};
+  if(!computeFamily) {
+    for(u32 familyIdx{0u};
+        familyIdx < physicalDevice.GetQueueFamilyCount(); familyIdx++) {
+      if(physicalDevice.HasCompute(familyIdx)) {
+        computeFamily = familyIdx;
+        break;
+      }
+    }
+  }
+  if(!computeFamily) computeFamily = graphicsFamily;
 
-  queueCI.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-  queueCI.queueFamilyIndex = *graphicsFamily;
-  queueCI.queueCount       = 1u;
-  queueCI.pQueuePriorities = &info.priorities[0];
+  // Uploads may transition a resource from a graphics state to CopyDst.
+  // Keep the copy role on a graphics-capable family so those stages are
+  // valid and no graphics-to-copy ownership transfer is needed. A separate
+  // queue index is still used when the family has one.
+  const u32 transferFamily = *graphicsFamily;
 
-  if(graphicsFamily == computeFamily) {
-    queueCI.queueCount++;
-    computeFamily = std::nullopt;
+  info.families[enumValue(QueueType::Graphics)] = *graphicsFamily;
+  info.families[enumValue(QueueType::Compute)]  = *computeFamily;
+  info.families[enumValue(QueueType::Copy)]     = transferFamily;
+
+  // Allocate queue indices per family without exceeding queueCount.
+  // If a family is oversubscribed, share index 0.
+  Arr<u32> nextIndex(physicalDevice.GetQueueFamilyCount(), 0u);
+  for(u32 role = 0u; role < QueueTypeCount; ++role) {
+    const u32 family    = info.families[role];
+    const u32 available = physicalDevice.GetQueueFamily(family)
+                            .queueFamilyProperties.queueCount;
+    if(nextIndex[family] < available) {
+      info.indices[role] = nextIndex[family]++;
+    } else {
+      info.indices[role] = 0u;
+    }
   }
 
-  if(graphicsFamily == transferFamily) {
-    queueCI.queueCount++;
-    transferFamily = std::nullopt;
-  }
+  // One DeviceQueueCreateInfo per unique family, capped to available.
+  Arr<bool> seen(physicalDevice.GetQueueFamilyCount(), false);
+  for(u32 role = 0u; role < QueueTypeCount; ++role) {
+    const u32 family = info.families[role];
+    if(seen[family]) continue;
+    seen[family] = true;
 
-  info.CIs.push_back(queueCI);
+    const u32 available = physicalDevice.GetQueueFamily(family)
+                            .queueFamilyProperties.queueCount;
+    u32 needed = 0u;
+    for(u32 other = 0u; other < QueueTypeCount; ++other) {
+      if(info.families[other] == family)
+        needed = std::max(needed, info.indices[other] + 1u);
+    }
 
-  if(
-    computeFamily && transferFamily &&
-    computeFamily == transferFamily) {
-    queueCI.queueFamilyIndex = *computeFamily;
-    queueCI.queueCount       = 2u;
-    queueCI.pQueuePriorities = &info.priorities[1];
+    VkDeviceQueueCreateInfo queueCI{};
+    queueCI.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    queueCI.queueFamilyIndex = family;
+    queueCI.queueCount       = std::min(needed, available);
+    queueCI.pQueuePriorities = info.priorities.data();
     info.CIs.push_back(queueCI);
-  } else {
-    if(computeFamily) {
-      queueCI.queueFamilyIndex = *computeFamily;
-      queueCI.queueCount       = 1u;
-      queueCI.pQueuePriorities = &info.priorities[1];
-      info.CIs.push_back(queueCI);
-    }
-
-    if(transferFamily) {
-      queueCI.queueFamilyIndex = *transferFamily;
-      queueCI.queueCount       = 1u;
-      queueCI.pQueuePriorities = &info.priorities[2];
-      info.CIs.push_back(queueCI);
-    }
   }
 
   return info;

@@ -91,20 +91,6 @@ struct Vector {
 
   constexpr u64 size() const { return S; }
 
-  // template<u64 S2>
-  // constexpr operator Vector<T, S2>() const
-  //{
-  //  Vector<T, S2> ret;
-  //  if constexpr(S >= S2) {
-  //    for(u64 i = 0u; i < S2; ++i)
-  //      ret[i] = v[i];
-  //  } else {
-  //    ret = {};
-  //    for(u64 i = 0u; i < S; ++i)
-  //      ret[i] = v[i];
-  //  }
-  //  return ret;
-  //}
 
   const T* data() const { return std::data(v); }
 };
@@ -159,8 +145,6 @@ struct Range32 {
   u32 size;
 };
 
-// Should it be pass by const ref or pass by value?
-// Need to profile.
 
 #define VD_VEC_PARAM  const Vector<T, S>&
 #define VD_VEC2_PARAM const Vector<T, 2>&
@@ -203,7 +187,7 @@ inline constexpr Matrix<T, S> Add(VD_MTX_PARAM m, T s)
 {
   Matrix<T, S> ret;
   for(u64 i = 0u; i < S; ++i)
-    for(u64 j = 0u; j < S; ++j) ret[i][j] = m[i] + s;
+    for(u64 j = 0u; j < S; ++j) ret[i][j] = m[i][j] + s;
 
   return ret;
 }
@@ -213,7 +197,7 @@ inline constexpr Matrix<T, S> Add(VD_MTX_PARAM m1, VD_MTX_PARAM m2)
 {
   Matrix<T, S> ret;
   for(u64 i = 0u; i < S; ++i)
-    for(u64 j = 0u; j < S; ++j) ret[i][j] = m1[i] + m2[j];
+    for(u64 j = 0u; j < S; ++j) ret[i][j] = m1[i][j] + m2[i][j];
 
   return ret;
 }
@@ -239,7 +223,7 @@ inline constexpr Matrix<T, S> Sub(VD_MTX_PARAM m, T s)
 {
   Matrix<T, S> ret;
   for(u64 i = 0u; i < S; ++i)
-    for(u64 j = 0u; j < S; ++j) ret[i][j] = m[i] - s;
+    for(u64 j = 0u; j < S; ++j) ret[i][j] = m[i][j] - s;
 
   return ret;
 }
@@ -249,7 +233,7 @@ inline constexpr Matrix<T, S> Sub(VD_MTX_PARAM m1, VD_MTX_PARAM m2)
 {
   Matrix<T, S> ret;
   for(u64 i = 0u; i < S; ++i)
-    for(u64 j = 0u; j < S; ++j) ret[i][j] = m1[i] - m2[j];
+    for(u64 j = 0u; j < S; ++j) ret[i][j] = m1[i][j] - m2[i][j];
 
   return ret;
 }
@@ -273,7 +257,7 @@ inline constexpr Matrix<T, S> Mul(VD_MTX_PARAM m, T s)
 {
   Matrix<T, S> ret;
   for(u64 i = 0u; i < S; ++i)
-    for(u64 j = 0u; j < S; ++j) ret[i][j] = m[i] * s;
+    for(u64 j = 0u; j < S; ++j) ret[i][j] = m[i][j] * s;
   return ret;
 }
 
@@ -328,7 +312,9 @@ inline constexpr Vector<T, S> Div(VD_VEC_PARAM v, T s)
 template<typename T, u64 S>
 inline constexpr Vector<T, S> Div(T s, VD_VEC_PARAM v)
 {
-  return Div(v, s);
+  Vector<T, S> ret;
+  for(u64 i = 0u; i < S; ++i) ret[i] = s / v[i];
+  return ret;
 }
 
 template<typename T, u64 S>
@@ -337,7 +323,7 @@ inline constexpr Matrix<T, S> Div(VD_MTX_PARAM m, T s)
   Matrix<T, S> ret;
   const auto   inv = static_cast<T>(1) / s;
   for(u64 i = 0u; i < S; ++i)
-    for(u64 j = 0u; j < S; ++j) ret[i][j] = m[i] * inv;
+    for(u64 j = 0u; j < S; ++j) ret[i][j] = m[i][j] * inv;
   return ret;
 }
 
@@ -438,7 +424,7 @@ inline constexpr Matrix<T, 2> One22()
 template<typename T>
 inline constexpr Matrix<T, 3> One33()
 {
-  return {One3<T>(), Zero3<T>(), Zero3<T>()};
+  return {One3<T>(), One3<T>(), One3<T>()};
 }
 
 template<typename T>
@@ -496,7 +482,7 @@ inline constexpr Vector<T, 4> Z4()
 }
 
 template<typename T>
-inline constexpr Vector<T, 2> W4()
+inline constexpr Vector<T, 4> W4()
 {
   return {0, 0, 0, 1};
 }
@@ -591,7 +577,7 @@ LookAt(VD_FLOAT3_PARAM eye, VD_FLOAT3_PARAM at, VD_FLOAT3_PARAM up)
   return ret;
 }
 
-inline /*constexpr*/ Float44
+inline Float44
 PerspectiveFov(f32 fov, f32 aspect, f32 znear, f32 zfar)
 {
   const auto height = std::cos(fov * .5f) / std::sin(fov * .5f);
@@ -626,7 +612,7 @@ inline constexpr Float44 Scaling(Float3 v)
 
 inline constexpr Float44 Scaling(f32 v) { return Scaling({v, v, v}); }
 
-inline /*constexpr*/ Float44 RotationX(f32 v)
+inline Float44 RotationX(f32 v)
 {
   Float44 ret = Identity<Float44>();
 
@@ -638,7 +624,7 @@ inline /*constexpr*/ Float44 RotationX(f32 v)
   return ret;
 }
 
-inline /*constexpr*/ Float44 RotationY(f32 v)
+inline Float44 RotationY(f32 v)
 {
   Float44 ret = Identity<Float44>();
 
@@ -650,7 +636,7 @@ inline /*constexpr*/ Float44 RotationY(f32 v)
   return ret;
 }
 
-inline /*constexpr*/ Float44 RotationZ(f32 v)
+inline Float44 RotationZ(f32 v)
 {
   Float44 ret = Identity<Float44>();
 
@@ -662,7 +648,7 @@ inline /*constexpr*/ Float44 RotationZ(f32 v)
   return ret;
 }
 
-inline /*constexpr*/ Float44 Rotation(Float3 v)
+inline Float44 Rotation(Float3 v)
 {
   auto rx = RotationX(v[0]);
   auto ry = RotationY(v[1]);
@@ -671,38 +657,46 @@ inline /*constexpr*/ Float44 Rotation(Float3 v)
   return Mul(rx, ry, rz);
 }
 
-// IEEE-754 float16 conversion functions
 inline u16 Float32ToFloat16(f32 f)
 {
-  u32 x        = *reinterpret_cast<u32*>(&f);
-  u32 sign     = (x >> 31) & 0x1;
-  u32 exp      = (x >> 23) & 0xFF;
-  u32 mantissa = x & 0x7FFFFF;
+  const u32 bits     = std::bit_cast<u32>(f);
+  const u32 sign     = (bits >> 16u) & 0x8000u;
+  const u32 exponent = (bits >> 23u) & 0xffu;
+  u32       mantissa = bits & 0x7fffffu;
 
-  if(exp == 0xFF) {     // Handle infinity and NaN
-    if(mantissa == 0) { // Infinity
-      return static_cast<u16>((sign << 15) | 0x7C00);
-    } else { // NaN
-      return static_cast<u16>((sign << 15) | 0x7C00 | (mantissa >> 13));
-    }
+  if(exponent == 0xffu) {
+    if(mantissa == 0u) return static_cast<u16>(sign | 0x7c00u);
+    return static_cast<u16>(sign | 0x7c00u | 0x0200u | (mantissa >> 13u));
+  }
+  if(exponent == 0u) return static_cast<u16>(sign);
+
+  const i32 unbiased = static_cast<i32>(exponent) - 127;
+  if(unbiased > 15) return static_cast<u16>(sign | 0x7c00u);
+  if(unbiased < -25) return static_cast<u16>(sign);
+
+  if(unbiased < -14) {
+    mantissa |= 0x800000u;
+    const u32 shift     = static_cast<u32>(-unbiased - 1);
+    u32       rounded   = mantissa >> shift;
+    const u32 remainder = mantissa & ((1u << shift) - 1u);
+    const u32 halfway   = 1u << (shift - 1u);
+    if(remainder > halfway || (remainder == halfway && (rounded & 1u)))
+      ++rounded;
+    return static_cast<u16>(sign | rounded);
   }
 
-  // Convert normalized numbers
-  int newExp = exp - 127 + 15;
-  if(newExp >= 31) { // Overflow to infinity
-    return static_cast<u16>((sign << 15) | 0x7C00);
-  } else if(newExp <= 0) { // Underflow to 0 or denormal
-    if(newExp < -10) {
-      return static_cast<u16>(sign << 15); // Zero
-    }
-    // Denormal
-    mantissa = (mantissa | 0x800000) >> (14 - newExp);
-    return static_cast<u16>((sign << 15) | mantissa);
-  }
+  u32 rounded = mantissa >> 13u;
+  const u32 remainder = mantissa & 0x1fffu;
+  if(remainder > 0x1000u || (remainder == 0x1000u && (rounded & 1u)))
+    ++rounded;
 
-  // Regular normalized number
-  return static_cast<u16>(
-    (sign << 15) | (newExp << 10) | (mantissa >> 13));
+  u32 halfExponent = static_cast<u32>(unbiased + 15);
+  if(rounded == 0x400u) {
+    rounded = 0u;
+    if(++halfExponent >= 31u)
+      return static_cast<u16>(sign | 0x7c00u);
+  }
+  return static_cast<u16>(sign | (halfExponent << 10u) | rounded);
 }
 
 inline f32 Float16ToFloat32(u16 h)
@@ -711,18 +705,19 @@ inline f32 Float16ToFloat32(u16 h)
   u32 exp      = (h >> 10) & 0x1F;
   u32 mantissa = h & 0x3FF;
 
-  u32 f = 0;
+  u32 f = 0u;
   if(exp == 0) { // Zero or denormal
     if(mantissa == 0) {
       f = sign << 31;
     } else { // Denormal
-      exp = 0;
+      i32 unbiased = -14;
       while((mantissa & 0x400) == 0) {
         mantissa <<= 1;
-        exp++;
+        --unbiased;
       }
       mantissa &= 0x3FF;
-      f = (sign << 31) | ((127 - 15 - exp) << 23) | (mantissa << 13);
+      f = (sign << 31) |
+          (static_cast<u32>(unbiased + 127) << 23) | (mantissa << 13);
     }
   } else if(exp == 0x1F) { // Infinity or NaN
     f = (sign << 31) | (0xFF << 23) | (mantissa << 13);
@@ -730,7 +725,7 @@ inline f32 Float16ToFloat32(u16 h)
     f = (sign << 31) | ((exp + (127 - 15)) << 23) | (mantissa << 13);
   }
 
-  return *reinterpret_cast<f32*>(&f);
+  return std::bit_cast<f32>(f);
 }
 
 } // namespace mt

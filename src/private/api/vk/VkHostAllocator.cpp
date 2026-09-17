@@ -35,29 +35,17 @@ u64 HostAllocator::GetUsage() const
 HostAllocator::AllocationResult HostAllocator::internalAllocate(
   const size_t size, const size_t alignment)
 {
-  // VDAssert(alignment != 0 && !(alignment & (alignment - 1)));
-
   if(size == 0u) return {nullptr, 0u};
 
-  const auto allocationSize =
-    size + alignment + sizeof(AllocationHeader);
+  if(
+    alignment == 0u || (alignment & (alignment - 1u)) != 0u ||
+    alignment > MaxU64 - sizeof(AllocationHeader) ||
+    size > MaxU64 - sizeof(AllocationHeader) - alignment)
+    return {nullptr, 0u};
+  const auto allocationSize = size + alignment + sizeof(AllocationHeader);
   const auto pAllocation = ::malloc(allocationSize);
 
   if(!pAllocation) return {nullptr, 0u};
-
-  //auto pMemory = reinterpret_cast<void*>(
-  //  (reinterpret_cast<uintptr_t>(pAllocation) +
-  //  sizeof(AllocationHeader) + alignment - 1u) &
-  //  ~(alignment - 1u));
-  //
-  //auto* pHeader = reinterpret_cast<AllocationHeader*>(
-  //  reinterpret_cast<uintptr_t>(pMemory) - sizeof(AllocationHeader));
-  //
-  //auto* pHeader = reinterpret_cast<AllocationHeader*>(
-  //  pAlignedMemory - sizeof(AllocationHeader));
-  //pHeader->pAllocation = pAllocation;
-  //pHeader->size        = allocationSize;
-  //pHeader->alignment   = alignment;
 
   char* pAllocationChar = reinterpret_cast<char*>(pAllocation);
   char* pAlignedMemory  = pAllocationChar + sizeof(AllocationHeader);
@@ -78,13 +66,13 @@ HostAllocator::AllocationResult HostAllocator::internalAllocate(
   // Calculate header position
   auto* pHeader = reinterpret_cast<AllocationHeader*>(
     pAlignedMemory - sizeof(AllocationHeader));
-  pHeader->pAllocation = pAllocation;
-  pHeader->size        = allocationSize;
-  pHeader->alignment   = alignment;
+  pHeader->pAllocation   = pAllocation;
+  pHeader->allocationSize = allocationSize;
+  pHeader->payloadSize    = size;
+  pHeader->alignment      = alignment;
 
-  m_usage.fetch_add(pHeader->size, std::memory_order_relaxed);
+  m_usage.fetch_add(pHeader->allocationSize, std::memory_order_relaxed);
 
-  //return {pMemory, allocationSize};
   return {reinterpret_cast<void*>(pAlignedMemory), allocationSize};
 }
 
@@ -113,16 +101,13 @@ void HostAllocator::internalFree(const void* pMemory)
 {
   if(!pMemory) return;
   const auto* pHeader = getAllocationHeader(pMemory);
-  m_usage.fetch_sub(pHeader->size, std::memory_order_relaxed);
+  m_usage.fetch_sub(pHeader->allocationSize, std::memory_order_relaxed);
   ::free(pHeader->pAllocation);
 }
 
 HostAllocator::AllocationHeader*
 HostAllocator::getAllocationHeader(const void* pMemory)
 {
-  //return reinterpret_cast<AllocationHeader*>(
-  //  reinterpret_cast<uintptr_t>(pMemory) - sizeof(AllocationHeader));
-
   const char* pHeaderAddress =
     reinterpret_cast<const char*>(pMemory) - sizeof(AllocationHeader);
   return reinterpret_cast<AllocationHeader*>(
@@ -132,7 +117,7 @@ HostAllocator::getAllocationHeader(const void* pMemory)
 size_t HostAllocator::getAllocationSize(const void* pMemory)
 {
   if(!pMemory) return 0u;
-  return getAllocationHeader(pMemory)->size;
+  return getAllocationHeader(pMemory)->payloadSize;
 }
 
 size_t HostAllocator::getAllocationAlignment(const void* pMemory)
@@ -147,9 +132,6 @@ void* VKAPI_CALL HostAllocator::vkAllocation(
 {
   auto&      self       = *reinterpret_cast<HostAllocator*>(pUserData);
   const auto allocation = self.internalAllocate(size, alignment);
-  //VDLogV(
-  //  "[  ALLOC] size: %zu (%zu), usage: %lld", allocation.size, size,
-  //  self.m_usage.load(std::memory_order::memory_order_relaxed));
   return allocation.pMemory;
 }
 
@@ -160,9 +142,6 @@ void* VKAPI_CALL HostAllocator::vkReallocation(
   auto&      self = *reinterpret_cast<HostAllocator*>(pUserData);
   const auto allocation =
     self.internalReallocate(pOriginal, size, alignment);
-  //VDLogV(
-  //  "[REALLOC] size: %zu (%zu), usage: %lld", allocation.size, size,
-  //  self.m_usage.load(std::memory_order::memory_order_relaxed));
   return allocation.pMemory;
 }
 
@@ -173,9 +152,6 @@ void VKAPI_CALL HostAllocator::vkFree(void* pUserData, void* pMemory)
   [[maybe_unused]] auto size = getAllocationSize(pMemory);
 
   self.internalFree(pMemory);
-  //VDLogV(
-  //  "[   FREE] size: %zu, usage: %lld", size,
-  //  self.m_usage.load(std::memory_order::memory_order_relaxed));
 }
 
 void VKAPI_CALL HostAllocator::vkInternalAllocationNotification(
@@ -185,9 +161,6 @@ void VKAPI_CALL HostAllocator::vkInternalAllocationNotification(
 {
   auto& self = *reinterpret_cast<HostAllocator*>(pUserData);
   self.m_usage.fetch_add(size, std::memory_order_relaxed);
-  //VDLogV(
-  //  "[ IALLOC] size: %zu, usage: %lld", size,
-  //  self.m_usage.load(std::memory_order::memory_order_relaxed));
 }
 
 void VKAPI_CALL HostAllocator::vkInternalFreeNotification(
@@ -197,7 +170,4 @@ void VKAPI_CALL HostAllocator::vkInternalFreeNotification(
 {
   auto& self = *reinterpret_cast<HostAllocator*>(pUserData);
   self.m_usage.fetch_sub(size, std::memory_order_relaxed);
-  //VDLogV(
-  //  "[  IFREE] size: %zu, usage: %lld", size,
-  //  self.m_usage.load(std::memory_order::memory_order_relaxed));
 }

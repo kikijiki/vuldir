@@ -4,6 +4,18 @@ using namespace vd;
 
 static constexpr u8 PngSignature[] = {137, 80, 78, 71, 13, 10, 26, 10};
 
+static u32 PngCrc32(Span<u8 const> bytes)
+{
+  u32 crc = 0xffffffffu;
+  for(const u8 byte: bytes) {
+    crc ^= byte;
+    for(u32 bit = 0u; bit < 8u; ++bit)
+      crc = (crc >> 1u) ^
+            (0xedb88320u & (0u - (crc & 1u)));
+  }
+  return crc ^ 0xffffffffu;
+}
+
 static constexpr u8 DeflateHCLENMap[] = {
   16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
 
@@ -70,12 +82,16 @@ public:
 
       auto code = nextCode[length];
       ++nextCode[length];
+      if(code >= (1u << length))
+        throw std::runtime_error("Huffman table: oversubscribed codes");
 
       u32 padBits  = m_maxLength - length;
       u32 padCount = 1u << padBits;
       for(u32 pad = 0u; pad < padCount; ++pad) {
         u32 reverseIdx = (code << padBits) | pad;
         u32 entryIdx   = bitReverse(reverseIdx, m_maxLength);
+        if(entryIdx >= m_entries.size())
+          throw std::runtime_error("Huffman table: code out of range");
 
         m_entries[entryIdx].symbol = static_cast<u16>(symbolIdx);
         m_entries[entryIdx].bits   = length;
@@ -117,7 +133,7 @@ private:
   u32                       m_maxLength;
 };
 
-static Arr<u8> ZLibDeflate(Span<u8 const> inData, u64 sizeHint = 0u)
+static Arr<u8> ZLibDeflate(Span<u8 const> inData, u64 maxOutputSize)
 {
   ByteIStream inBytes(inData);
 
@@ -125,18 +141,24 @@ static Arr<u8> ZLibDeflate(Span<u8 const> inData, u64 sizeHint = 0u)
   u8 FLG = inBytes.Read<u8>();
 
   u8 compressionMethod = CMF & 0xf;
-  // u8 compressionInfo   = CMF >> 4;
-  // u8 checkBits         = FLG & 0x1f;
   u8 presetDictionary = (FLG >> 5) & 0x1;
-  // u8 compressionLevel  = FLG >> 6;
 
-  if(compressionMethod != 8u || presetDictionary != 0u)
-    throw std::runtime_error("Deflate: unsopported settings");
+  if(
+    compressionMethod != 8u || presetDictionary != 0u ||
+    ((static_cast<u32>(CMF) << 8u) | FLG) % 31u != 0u)
+    throw std::runtime_error(
+      "Deflate: unsupported or invalid settings");
 
   BitIStream  inBits(inBytes.ReadAllBytes());
-  ByteOStream outBytes(sizeHint);
+  ByteOStream outBytes(maxOutputSize);
 
-  // Deflate
+  const auto writeByte = [&](u8 value) {
+    if(outBytes.size() >= maxOutputSize)
+      throw std::runtime_error(
+        "Deflate: decoded data exceeds image size");
+    outBytes.Write(value);
+  };
+
   for(;;) {
     u32 BFINAL = inBits.Read(1);
     u32 BTYPE  = inBits.Read(2);
@@ -144,17 +166,17 @@ static Arr<u8> ZLibDeflate(Span<u8 const> inData, u64 sizeHint = 0u)
     HuffmanTable literalLengthTable(15u);
     HuffmanTable distanceTable(15u);
 
-    if(BTYPE == 0u) // Literal
+    if(BTYPE == 0u) // Stored
     {
       inBits.SkipToNextByte();
       u32 LEN  = inBits.Read(16);
       u32 NLEN = inBits.Read(16);
 
-      if(LEN != ~NLEN)
+      if(LEN != ((~NLEN) & 0xffffu))
         throw std::runtime_error("Deflate: bad block length");
 
       for(u32 idx = 0u; idx < LEN; ++idx)
-        outBytes.Write(static_cast<u8>(inBits.Read(8u)));
+        writeByte(static_cast<u8>(inBits.Read(8u)));
     } else {
       std::array<u8, 512u> huffmanBuffer = {};
       std::span<u8>        lengthData;
@@ -204,6 +226,9 @@ static Arr<u8> ZLibDeflate(Span<u8 const> inData, u64 sizeHint = 0u)
             throw std::runtime_error("Deflate: bad encoded length");
           }
 
+          if(lengthRepeat > lengthCount - lengthIdx)
+            throw std::runtime_error(
+              "Deflate: bad literal length count");
           for(u32 idx = 0u; idx < lengthRepeat; ++idx) {
             huffmanBuffer[lengthIdx] = lengthValue;
             ++lengthIdx;
@@ -214,8 +239,7 @@ static Arr<u8> ZLibDeflate(Span<u8 const> inData, u64 sizeHint = 0u)
         }
 
         if(lengthIdx != lengthCount)
-          throw new std::runtime_error(
-            "Deflate: bad literal length count");
+          throw std::runtime_error("Deflate: bad literal length count");
 
       } else {
         throw std::runtime_error("Deflate: bad block type");
@@ -230,17 +254,22 @@ static Arr<u8> ZLibDeflate(Span<u8 const> inData, u64 sizeHint = 0u)
         if(literalLength == 256u) break;
 
         if(literalLength < 256u) {
-          outBytes.Write(literalLength & 0xff);
+          writeByte(static_cast<u8>(literalLength));
         } else {
           auto literalIdx = literalLength - 257u;
-          auto length     = DeflateExtraLengthValue[literalIdx];
+          if(literalIdx >= std::size(DeflateExtraLengthValue))
+            throw std::runtime_error("Deflate: invalid length symbol");
+          auto length = DeflateExtraLengthValue[literalIdx];
 
           auto lengthExtraBits = DeflateExtraLengthBits[literalIdx];
           if(lengthExtraBits > 0u)
             length += inBits.Read(lengthExtraBits);
 
           auto distanceIdx = distanceTable.Decode(inBits);
-          auto distance    = DeflateExtraDistanceValue[distanceIdx];
+          if(distanceIdx >= std::size(DeflateExtraDistanceValue))
+            throw std::runtime_error(
+              "Deflate: invalid distance symbol");
+          auto distance = DeflateExtraDistanceValue[distanceIdx];
 
           auto distanceExtraBits =
             DeflateExtraDistanceBits[distanceIdx];
@@ -253,13 +282,16 @@ static Arr<u8> ZLibDeflate(Span<u8 const> inData, u64 sizeHint = 0u)
 
           auto rangeStart = outBytes.size() - distance;
           for(u32 idx = 0u; idx < length; ++idx)
-            outBytes.Write(outBytes[rangeStart + idx]);
+            writeByte(outBytes[rangeStart + idx]);
         }
       }
     }
     if(BFINAL) break;
   }
 
+  if(outBytes.size() != maxOutputSize)
+    throw std::runtime_error(
+      "Deflate: decoded data has unexpected size");
   return outBytes.data();
 }
 
@@ -267,12 +299,16 @@ static Arr<u8> PngReconstruct(
   Span<u8 const> data, UInt2 size, u32 channelCount, u32 bitsPerChannel)
 {
   // Calculate packed scanline size in bytes.
-  u32 scanlineSize =
-    (size[0] * bitsPerChannel * channelCount + 7u) / 8u;
+  const u64 scanlineSize =
+    (static_cast<u64>(size[0]) * bitsPerChannel * channelCount + 7u) /
+    8u;
   // For filtering operations, need at least 1 byte per pixel.
   u32 bytesPerPixel =
     std::max(1u, (bitsPerChannel * channelCount + 7u) / 8u);
-  u32 outputSize = size[1] * scanlineSize;
+  const u64 outputSize = static_cast<u64>(size[1]) * scanlineSize;
+
+  if(data.size() != outputSize + size[1])
+    throw std::runtime_error("PNG: invalid decoded image size");
 
   ByteIStream inData(data);
   ByteOStream outData(outputSize);
@@ -291,7 +327,7 @@ static Arr<u8> PngReconstruct(
 
   Span<u8 const> previousScanline;
   for(u32 rowIdx = 0u; rowIdx < size[1]; ++rowIdx) {
-    u64 scanlineStart = outData.size();
+    const u64 scanlineStart = outData.size();
 
     u32  filter   = inData.Read<u8>();
     auto scanline = inData.ReadBytes(scanlineSize);
@@ -301,9 +337,9 @@ static Arr<u8> PngReconstruct(
         outData.Write(scanline);
         break;
       case 1u: {
-        for(u32 byteIdx = 0u; byteIdx < bytesPerPixel; ++byteIdx)
+        for(u64 byteIdx = 0u; byteIdx < bytesPerPixel; ++byteIdx)
           outData.Write(scanline[byteIdx]);
-        for(u32 byteIdx = bytesPerPixel; byteIdx < scanline.size();
+        for(u64 byteIdx = bytesPerPixel; byteIdx < scanline.size();
             ++byteIdx) {
           u8 cur  = scanline[byteIdx];
           u8 left = outData[outData.size() - bytesPerPixel];
@@ -311,41 +347,43 @@ static Arr<u8> PngReconstruct(
         }
       } break;
       case 2u:
-        for(u32 byteIdx = 0u; byteIdx < scanline.size(); ++byteIdx) {
+        for(u64 byteIdx = 0u; byteIdx < scanline.size(); ++byteIdx) {
           u8 cur = scanline[byteIdx];
-          u8 top = previousScanline[byteIdx];
+          u8 top = rowIdx == 0u ? 0u : previousScanline[byteIdx];
           outData.Write(cur + top);
         }
         break;
       case 3u:
-        for(u32 byteIdx = 0u; byteIdx < bytesPerPixel; ++byteIdx) {
+        for(u64 byteIdx = 0u; byteIdx < bytesPerPixel; ++byteIdx) {
           u8 cur  = scanline[byteIdx];
           u8 left = 0u;
-          u8 top  = previousScanline[byteIdx];
+          u8 top  = rowIdx == 0u ? 0u : previousScanline[byteIdx];
           outData.Write(cur + (left + top) / 2u);
         }
-        for(u32 byteIdx = bytesPerPixel; byteIdx < scanline.size();
+        for(u64 byteIdx = bytesPerPixel; byteIdx < scanline.size();
             ++byteIdx) {
           u8 cur  = scanline[byteIdx];
           u8 left = outData[outData.size() - bytesPerPixel];
-          u8 top  = previousScanline[byteIdx];
+          u8 top  = rowIdx == 0u ? 0u : previousScanline[byteIdx];
           outData.Write(cur + (left + top) / 2u);
         }
         break;
       case 4u:
-        for(u32 byteIdx = 0u; byteIdx < bytesPerPixel; ++byteIdx) {
+        for(u64 byteIdx = 0u; byteIdx < bytesPerPixel; ++byteIdx) {
           u8 cur     = scanline[byteIdx];
           u8 left    = 0u;
-          u8 top     = previousScanline[byteIdx];
+          u8 top     = rowIdx == 0u ? 0u : previousScanline[byteIdx];
           u8 topLeft = 0;
           outData.Write(cur + paeth(left, top, topLeft));
         }
-        for(u32 byteIdx = bytesPerPixel; byteIdx < scanline.size();
+        for(u64 byteIdx = bytesPerPixel; byteIdx < scanline.size();
             ++byteIdx) {
           u8 cur     = scanline[byteIdx];
           u8 left    = outData[outData.size() - bytesPerPixel];
-          u8 top     = previousScanline[byteIdx];
-          u8 topLeft = previousScanline[byteIdx - bytesPerPixel];
+          u8 top     = rowIdx == 0u ? 0u : previousScanline[byteIdx];
+          u8 topLeft = rowIdx == 0u
+                         ? 0u
+                         : previousScanline[byteIdx - bytesPerPixel];
           outData.Write(cur + paeth(left, top, topLeft));
         }
         break;
@@ -398,17 +436,34 @@ DataReader::readPng(std::istream& src, const ImageOptions& options)
   compressedImageBytes.reserve(bytes.size());
 
   Arr<u8> palette;
+  bool    sawHeader = false;
+  bool    sawData   = false;
+  bool    endedData = false;
+  bool    sawPalette = false;
 
   for(;;) {
     bool hasMoreChunks = true;
 
+    const u64 chunkOffset = stream.GetOffset();
     auto dataSize  = stream.ReadSwap<u32>();
     auto chunkType = stream.ReadSwap<u32>();
+    if(
+      stream.GetSizeLeft() <
+      static_cast<u64>(dataSize) + sizeof(u32))
+      throw std::runtime_error("PNG: truncated chunk");
+    if(!sawHeader && chunkType != fourCC("IHDR"))
+      throw std::runtime_error("PNG: header must be the first chunk");
+    if(sawData && chunkType != fourCC("IDAT")) endedData = true;
 
     switch(chunkType) {
       case fourCC("IHDR"): {
+        if(sawHeader || dataSize != 13u)
+          throw std::runtime_error("PNG: invalid header chunk");
+        sawHeader   = true;
         out.size[0] = stream.ReadSwap<u32>();
         out.size[1] = stream.ReadSwap<u32>();
+        if(out.size[0] == 0u || out.size[1] == 0u)
+          throw std::runtime_error("PNG: invalid image dimensions");
 
         bitsPerChannel = stream.Read<u8>();
 
@@ -426,34 +481,55 @@ DataReader::readPng(std::istream& src, const ImageOptions& options)
 
         switch(colorType) {
           case 0u: // Grayscale
+            if(
+              bitsPerChannel != 1u && bitsPerChannel != 2u &&
+              bitsPerChannel != 4u && bitsPerChannel != 8u &&
+              bitsPerChannel != 16u)
+              throw std::runtime_error(
+                "PNG: invalid grayscale bit depth");
             channelCount = 1u;
             out.format   = (bitsPerChannel <= 8u) ? Format::R8_UNORM
                                                   : Format::R16_UNORM;
             break;
           case 2u: // Color
+            if(bitsPerChannel != 8u && bitsPerChannel != 16u)
+              throw std::runtime_error("PNG: invalid RGB bit depth");
             channelCount = 3u;
             out.format   = (bitsPerChannel == 8u)
                              ? Format::R8G8B8A8_UNORM
                              : Format::R16G16B16A16_UNORM;
             break;
           case 3u: // Indexed color
+            if(
+              bitsPerChannel != 1u && bitsPerChannel != 2u &&
+              bitsPerChannel != 4u && bitsPerChannel != 8u)
+              throw std::runtime_error(
+                "PNG: invalid palette bit depth");
             channelCount = 1u;
             out.format   = Format::R8G8B8A8_UNORM;
             break;
           case 4u: // Grayscale with alpha
-            // channelCount = 2u;
             throw std::runtime_error(
               "PNG: grayscale with alpha not supported");
           case 6u: // Color with alpha
+            if(bitsPerChannel != 8u && bitsPerChannel != 16u)
+              throw std::runtime_error("PNG: invalid RGBA bit depth");
             channelCount = 4u;
             out.format   = (bitsPerChannel == 8u)
                              ? Format::R8G8B8A8_UNORM
                              : Format::R16G16B16A16_UNORM;
             break;
+          default:
+            throw std::runtime_error("PNG: unsupported color type");
         }
       } break;
 
       case fourCC("IDAT"): {
+        if(!sawHeader)
+          throw std::runtime_error("PNG: data before header");
+        if(endedData)
+          throw std::runtime_error("PNG: data chunks must be consecutive");
+        sawData        = true;
         auto chunkData = stream.ReadBytes(dataSize);
         compressedImageBytes.insert(
           compressedImageBytes.end(), chunkData.begin(),
@@ -461,7 +537,13 @@ DataReader::readPng(std::istream& src, const ImageOptions& options)
       } break;
 
       case fourCC("PLTE"): {
-        palette.reserve(dataSize / 3u);
+        if(
+          !sawHeader || sawData || sawPalette || dataSize == 0u ||
+          dataSize % 3u != 0u || dataSize > 768u)
+          throw std::runtime_error("PNG: invalid palette chunk");
+        sawPalette = true;
+        palette.clear();
+        palette.reserve((dataSize / 3u) * 4u);
         for(u32 idx = 0u; idx < dataSize / 3u; ++idx) {
           palette.push_back(stream.Read<u8>());
           palette.push_back(stream.Read<u8>());
@@ -471,10 +553,11 @@ DataReader::readPng(std::istream& src, const ImageOptions& options)
       } break;
 
       case fourCC("tRNS"): {
-        if(colorType != 3u)
+        if(
+          sawData || colorType != 3u || palette.empty() ||
+          dataSize > palette.size() / 4u)
           throw std::runtime_error(
-            "PNG: transparency chunk supported only for indexed color "
-            "images");
+            "PNG: invalid indexed transparency chunk");
 
         out.format = Format::R8G8B8A8_UNORM;
         for(u64 idx = 0u; idx < dataSize; ++idx)
@@ -482,55 +565,93 @@ DataReader::readPng(std::istream& src, const ImageOptions& options)
       } break;
 
       case fourCC("IEND"):
+        if(dataSize != 0u)
+          throw std::runtime_error("PNG: invalid end chunk");
         hasMoreChunks = false;
         break;
 
       default:
+        // Unknown critical chunks (uppercase first type byte) change how
+        // the image must be interpreted and cannot be safely ignored.
+        if((bytes[chunkOffset + sizeof(u32)] & 0x20u) == 0u)
+          throw std::runtime_error("PNG: unsupported critical chunk");
         stream.SkipBytes(dataSize);
         break;
     }
 
-    // Skip CRC
-    [[maybe_unused]] u32 crc = stream.ReadSwap<u32>();
+    const u32 storedCrc = stream.ReadSwap<u32>();
+    const u64 crcOffset = chunkOffset + sizeof(u32);
+    const u64 crcSize = sizeof(u32) + static_cast<u64>(dataSize);
+    if(PngCrc32(Span<u8 const>{bytes.data() + crcOffset, crcSize}) != storedCrc)
+      throw std::runtime_error("PNG: chunk CRC mismatch");
 
-    if(!hasMoreChunks) break;
+    if(!hasMoreChunks) {
+      if(stream.HasMoreData())
+        throw std::runtime_error("PNG: trailing data after end chunk");
+      break;
+    }
 
     if(!stream.HasMoreData())
       throw std::runtime_error("PNG: missing end chunk");
   }
 
-  u64 pixelCount =
-    static_cast<u64>(out.size[0]) * static_cast<u64>(out.size[1]);
-  u64 bitsPerPixel = (channelCount * bitsPerChannel) / 8u;
-  u64 sizeHint     = pixelCount * bitsPerPixel +
-                 out.size[1]; // Extra byte for each scanline's filter.
+  if(!sawHeader || !sawData)
+    throw std::runtime_error("PNG: missing header or image data");
 
-  auto expandedData = ZLibDeflate(compressedImageBytes, sizeHint);
+  const u64 pixelCount =
+    static_cast<u64>(out.size[0]) * static_cast<u64>(out.size[1]);
+  const u64 scanlineBits =
+    static_cast<u64>(out.size[0]) * channelCount * bitsPerChannel;
+  const u64 scanlineSize = (scanlineBits + 7u) / 8u;
+  if(scanlineSize > (MaxU64 / out.size[1]) - 1u)
+    throw std::runtime_error("PNG: image dimensions overflow");
+  const u64 decodedSize =
+    (scanlineSize + 1u) * static_cast<u64>(out.size[1]);
+  constexpr u64 MaxDecodedImageSize = 512u * 1024u * 1024u;
+  if(decodedSize > MaxDecodedImageSize)
+    throw std::runtime_error("PNG: decoded image is too large");
+
+  auto expandedData = ZLibDeflate(compressedImageBytes, decodedSize);
   auto imageData    = PngReconstruct(
     expandedData, out.size, channelCount, bitsPerChannel);
 
-  // Apply palette if present.
-  if(!palette.empty()) {
-    // Update channel count from 1 (indexed) to the final one.
-    channelCount   = 3u;
+  // Expand packed grayscale/palette samples before interpreting them.
+  if(bitsPerChannel < 8u) {
+    Arr<u8>   buffer;
+    const u64 sampleCount = pixelCount * channelCount;
+    buffer.reserve(sampleCount);
+
+    const u32  maxValue = (1u << bitsPerChannel) - 1u;
+    BitIStream samples(imageData);
+    for(u64 idx = 0u; idx < sampleCount; ++idx) {
+      const u8 value = samples.Read<u8>(bitsPerChannel);
+      buffer.push_back(
+        colorType == 3u ? value
+                        : static_cast<u8>((value * 255u) / maxValue));
+    }
+
+    imageData      = std::move(buffer);
+    bitsPerChannel = 8u;
+  }
+
+  if(colorType == 3u) {
+    if(palette.empty())
+      throw std::runtime_error(
+        "PNG: indexed image is missing a palette");
+
+    channelCount   = 4u;
     bitsPerChannel = 8u;
 
     Arr<u8> buffer;
     buffer.reserve(imageData.size() * channelCount);
 
-    if(channelCount == 3u) {
-      for(u64 idx: imageData) {
-        buffer.push_back(palette[idx * 4u + 0u]);
-        buffer.push_back(palette[idx * 4u + 1u]);
-        buffer.push_back(palette[idx * 4u + 2u]);
-      }
-    } else {
-      for(u64 idx: imageData) {
-        buffer.push_back(palette[idx * 4u + 0u]);
-        buffer.push_back(palette[idx * 4u + 1u]);
-        buffer.push_back(palette[idx * 4u + 2u]);
-        buffer.push_back(palette[idx * 4u + 3u]);
-      }
+    for(u64 idx: imageData) {
+      if(idx >= palette.size() / 4u)
+        throw std::runtime_error("PNG: palette index out of range");
+      buffer.push_back(palette[idx * 4u + 0u]);
+      buffer.push_back(palette[idx * 4u + 1u]);
+      buffer.push_back(palette[idx * 4u + 2u]);
+      buffer.push_back(palette[idx * 4u + 3u]);
     }
 
     imageData = std::move(buffer);
@@ -554,23 +675,6 @@ DataReader::readPng(std::istream& src, const ImageOptions& options)
     }
 
     imageData = std::move(buffer);
-  }
-
-  // If there are less than 8 bits per channel (grayscale), scale them
-  // up to 8.
-  if(bitsPerChannel < 8u) {
-    Arr<u8> buffer;
-    buffer.reserve(pixelCount * channelCount);
-
-    u32 scaling = 8u - bitsPerChannel;
-
-    BitIStream s(imageData);
-    while(s.HasMoreData())
-      buffer.push_back(
-        static_cast<u8>(s.Read(bitsPerChannel) << scaling));
-
-    imageData = std::move(buffer);
-    // bitsPerChannel = 8u;
   }
 
   out.texels = std::move(imageData);

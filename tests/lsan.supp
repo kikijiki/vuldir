@@ -1,0 +1,3 @@
+# Process-lifetime allocations in the Vulkan loader/driver and XCB.
+leak:libvulkan.so
+leak:libxcb.so

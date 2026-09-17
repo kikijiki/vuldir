@@ -14,23 +14,18 @@ public:
     const fs::path& path, const fs::path* basePath)>;
 
   struct Desc {
-    // If you have an asset cache you can filter out assets that you
-    // already have loaded. In that case data load for that buffer will
-    // be skipped. You can then later use the uri to manually assign the
-    // buffer from your cache.
+    // Return true for uris already cached by the caller to skip loading
+    // their data. The buffer can be assigned later from the uri.
     UriFilter uriFilter;
 
-    // Leave empty to use the default filesystem reader.
-    // Can be set to read from custom data sources like archives and
-    // data packages. Since the uri can be relative, the second argument
-    // is an optional base path. Can also be used for raw data caching.
+    // Custom reader (archives, packages, caching). Empty uses the
+    // filesystem. basePath resolves relative uris.
     FileReader fileReader;
   };
 
   struct ImageOptions {
-    // Use to set or override the uri.
-    // When loading from the filesystem it will be the file path.
-    // Otherwise it will be empty by default;
+    // Overrides the uri. Defaults to the file path when loading from the
+    // filesystem, empty otherwise.
     Str uri;
 
     u8 alphaPadding = 0xff;
@@ -60,6 +55,9 @@ public:
 private:
   bool        isPng(std::istream& str);
   data::Image readPng(std::istream& str, const ImageOptions& options);
+
+  bool        isHdr(std::istream& str);
+  data::Image readHdr(std::istream& str, const ImageOptions& options);
 
   bool isGLTF(std::istream& src);
   bool isBinaryGLTF(std::istream& src);

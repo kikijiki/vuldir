@@ -24,7 +24,8 @@ public:
 private:
   struct AllocationHeader {
     void*  pAllocation;
-    size_t size;
+    size_t allocationSize;
+    size_t payloadSize;
     size_t alignment;
   };
 

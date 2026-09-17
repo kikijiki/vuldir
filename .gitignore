@@ -3,6 +3,9 @@ _out/
 _cache/
 CMakeFiles/
 .vs/
+.direnv/
+.log
 
 *.[Tt][Mm][Pp]
 *.lnk
+.wine-*/

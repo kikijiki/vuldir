@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <bitset>
 #include <cmath>
 #include <cstdarg>
@@ -26,16 +27,10 @@
 #include <utility>
 #include <variant>
 
-#ifdef VD_STL
-  #include "vuldir/core/Array.hpp"
-  #include "vuldir/core/String.hpp"
-  #include "vuldir/core/Vector.hpp"
-#else
-  #include <array>
-  #include <span>
-  #include <string>
-  #include <vector>
-#endif
+#include <array>
+#include <span>
+#include <string>
+#include <vector>
 
 namespace vd {
 
@@ -68,8 +63,6 @@ using Opt = std::optional<T>;
 template<typename... T>
 using Var = std::variant<T...>;
 
-#ifndef VD_STL
-
 using Str   = std::string;
 using WStr  = std::wstring;
 using Strv  = std::string_view;
@@ -87,7 +80,5 @@ using Span = std::span<T>;
 
 template<typename T>
 using Init = std::initializer_list<T>;
-
-#endif
 
 } // namespace vd

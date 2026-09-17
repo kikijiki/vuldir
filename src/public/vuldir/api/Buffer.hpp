@@ -52,14 +52,15 @@ public:
 
 public:
   const Desc& GetDesc() const { return m_desc; }
+  Device&     GetDevice() const { return m_device; }
 
   u32         AddView(ViewType type, const ViewRange& range = {});
   const View* GetView(ViewType type, u32 index = 0u) const;
 
   Flags<ResourceUsage> GetUsage() const { return m_desc.usage; }
   u64                  GetSize() const { return m_desc.size; }
-  ResourceState        GetState() const { return m_state; }
-  void       SetState(ResourceState state) { m_state = state; }
+  ResourceState GetState() const { return m_state.load(); }
+  void          SetState(ResourceState state) { m_state.store(state); }
   MemoryType GetMemoryType() const { return m_desc.memoryType; }
 
   bool Write(Span<u8 const> data);
@@ -68,6 +69,7 @@ public:
   {
     return Write(getBytes(data));
   }
+  bool Read(Span<u8> data);
 #ifdef VD_API_VK
   VkBuffer GetHandle() const { return m_handle; }
 #elif VD_API_DX
@@ -77,7 +79,7 @@ public:
 private:
   Device&         m_device;
   Desc            m_desc;
-  ResourceState   m_state;
+  std::atomic<ResourceState> m_state;
   Arr<UPtr<View>> m_views;
 
   MemoryPool::Allocation m_allocation;

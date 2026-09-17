@@ -27,6 +27,10 @@
         "VD_API": {
           "type": "STRING",
           "value": "vk"
+        },
+        "VD_WINDOW_SYSTEM": {
+          "type": "STRING",
+          "value": "wayland"
         }
       }
     },
@@ -38,6 +42,32 @@
           "type": "STRING",
           "value": "dx"
         }
+      }
+    },
+    {
+      "name": "ninja-dx-mingw",
+      "inherits": "ninja",
+      "binaryDir": "${sourceDir}/_build/${presetName}",
+      "toolchainFile": "${sourceDir}/cmake/mingw-w64-x86_64.cmake",
+      "cacheVariables": {
+        "VD_API": {
+          "type": "STRING",
+          "value": "dx"
+        },
+        "VD_USE_VULKAN_SDK": {
+          "type": "BOOL",
+          "value": "OFF"
+        },
+        "CMAKE_CXX_CLANG_TIDY": {
+          "type": "STRING",
+          "value": ""
+        }
+      },
+      "environment": {
+        "CC": "x86_64-w64-mingw32-gcc",
+        "CXX": "x86_64-w64-mingw32-g++",
+        "CMAKE_C_COMPILER": "x86_64-w64-mingw32-gcc",
+        "CMAKE_CXX_COMPILER": "x86_64-w64-mingw32-g++"
       }
     }
   ],
@@ -71,6 +101,16 @@
       "name": "ninja-dx-asan",
       "configurePreset": "ninja-dx",
       "configuration": "ASAN"
+    },
+    {
+      "name": "ninja-dx-mingw-debug",
+      "configurePreset": "ninja-dx-mingw",
+      "configuration": "Debug"
+    },
+    {
+      "name": "ninja-dx-mingw-release",
+      "configurePreset": "ninja-dx-mingw",
+      "configuration": "Release"
     }
   ],
   "testPresets": [],

@@ -20,10 +20,6 @@
   #define VD_EXPORT
 #endif
 
-#if defined(VD_OS_WINDOWS) && defined(_DEBUG)
-//  #define ENABLE_CRTDEBUG
-#endif
-
 #ifdef ENABLE_CRTDEBUG
   #define _CRTDBG_MAP_ALLOC
   #define _CRTDBG_MAP_ALLOC_NEW

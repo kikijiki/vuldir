@@ -1,6 +1,7 @@
 #include "vuldir/api/Binder.hpp"
 #include "vuldir/api/CommandBuffer.hpp"
 #include "vuldir/api/Device.hpp"
+#include "vuldir/api/Fence.hpp"
 #include "vuldir/api/PhysicalDevice.hpp"
 #include "vuldir/api/dx/DxCPUDescriptorPool.hpp"
 #include "vuldir/api/dx/DxUti.hpp"
@@ -30,6 +31,14 @@ Device::Device(const Desc& desc, const Swapchain::Desc& swapchainDesc):
 
 Device::~Device()
 {
+  // Owned swapchain, descriptor, and memory objects may still be referenced
+  // by submitted command lists. Retire that work before releasing them.
+  try {
+    WaitIdle();
+  } catch(const std::exception& error) {
+    VDLogE("Device teardown could not wait for idle: %s", error.what());
+  }
+
   m_binder         = nullptr;
   m_swapchain      = nullptr;
   m_descriptorPool = nullptr;
@@ -47,78 +56,156 @@ void Device::Submit(
   Fence* submitFence, SwapchainDep swapchainDep)
 {
   if(cmds.size() == 0u) return;
+  if(!cmds[0])
+    throw std::invalid_argument("Cannot submit a null command buffer");
   const auto  queueType = cmds[0]->GetQueueType();
   const auto& queue     = m_queues[enumValue(queueType)];
+  std::scoped_lock queueLock(*queue.mutex);
+  std::scoped_lock stateLock(m_resourceStateMutex);
 
   Arr<ID3D12CommandList*> dxCmds;
-  for(u32 idx = 0u; idx < std::size(cmds); ++idx) {
-    if(cmds[idx]) { dxCmds.push_back(&cmds[idx]->GetHandle()); }
+  for(auto* cmd: cmds) {
+    if(!cmd)
+      throw std::invalid_argument("Cannot submit a null command buffer");
+    if(cmd->GetQueueType() != queueType)
+      throw std::runtime_error("Command buffer queue mismatch");
+    if(&cmd->m_device != this)
+      throw std::invalid_argument(
+        "Command buffer belongs to a different device");
+    if(cmd->GetState() != CommandBuffer::State::Closed)
+      throw std::runtime_error(
+        "Only closed command buffers can be submitted");
+    dxCmds.push_back(&cmd->GetHandle());
   }
+  validateResourceStates(cmds);
+
+  for(const auto* wait: waits) {
+    if(!wait)
+      throw std::invalid_argument("Cannot wait on a null fence");
+    if(&wait->m_device != this)
+      throw std::invalid_argument("Wait fence belongs to a different device");
+  }
+  for(const auto* signal: signals) {
+    if(!signal)
+      throw std::invalid_argument("Cannot signal a null fence");
+    if(&signal->m_device != this)
+      throw std::invalid_argument(
+        "Signal fence belongs to a different device");
+  }
+  if(submitFence && &submitFence->m_device != this)
+    throw std::invalid_argument(
+      "Submit fence belongs to a different device");
 
   for(auto& wait: waits) {
-    if(wait) {
-      Wait(queueType, *wait);
-    } else
-      break;
+    if(!Wait(queueType, *wait))
+      throw std::runtime_error("Failed to queue a fence wait");
   }
   if(
     swapchainDep == SwapchainDep::Acquire ||
     swapchainDep == SwapchainDep::AcquireRelease) {
-    Wait(queueType, m_swapchain->GetAcquireFence());
+    if(!Wait(queueType, m_swapchain->GetAcquireFence()))
+      throw std::runtime_error(
+        "Failed to queue the swapchain acquire wait");
   }
 
   queue.handle->ExecuteCommandLists(size32(dxCmds), std::data(dxCmds));
+  for(auto* cmd: cmds) cmd->commitResourceStates();
 
   for(auto& signal: signals) {
-    if(signal) {
-      Signal(queueType, *signal);
-    } else
-      break;
+    if(!Signal(queueType, *signal))
+      throw std::runtime_error("Failed to signal a fence");
   }
 
   if(
     swapchainDep == SwapchainDep::Release ||
     swapchainDep == SwapchainDep::AcquireRelease) {
-    Signal(queueType, m_swapchain->GetReleaseFence());
+    if(!Signal(queueType, m_swapchain->GetReleaseFence()))
+      throw std::runtime_error(
+        "Failed to signal the swapchain release fence");
   }
 
-  if(submitFence) { Signal(queueType, *submitFence); }
+  if(submitFence) {
+    if(!Signal(queueType, *submitFence))
+      throw std::runtime_error("Failed to signal the submit fence");
+  }
 }
 
 bool Device::Wait(QueueType queue, Fence& fence) const
 {
+  if(!isValid(queue))
+    throw std::invalid_argument("Queue type is invalid");
+  if(&fence.m_device != this)
+    throw std::invalid_argument(
+      "Wait fence belongs to a different device");
+  std::scoped_lock queueLock(*m_queues[enumValue(queue)].mutex);
   return SUCCEEDED(
     GetQueueHandle(queue).Wait(&fence.GetHandle(), fence.GetTarget()));
 }
 
 bool Device::Wait(QueueType queue, Fence& fence, u64 value) const
 {
+  if(!isValid(queue))
+    throw std::invalid_argument("Queue type is invalid");
+  if(&fence.m_device != this)
+    throw std::invalid_argument(
+      "Wait fence belongs to a different device");
+  std::scoped_lock queueLock(*m_queues[enumValue(queue)].mutex);
   return SUCCEEDED(
     GetQueueHandle(queue).Wait(&fence.GetHandle(), value));
 }
 
 bool Device::Signal(QueueType queue, Fence& fence)
 {
-  fence.Step();
-  return SUCCEEDED(GetQueueHandle(queue).Signal(
-    &fence.GetHandle(), fence.GetTarget()));
+  if(!isValid(queue))
+    throw std::invalid_argument("Queue type is invalid");
+  if(&fence.m_device != this)
+    throw std::invalid_argument(
+      "Signal fence belongs to a different device");
+  std::scoped_lock queueLock(*m_queues[enumValue(queue)].mutex);
+  std::scoped_lock targetLock(fence.m_targetMutex);
+  const u64 target = fence.m_target.load();
+  if(target == MaxU64)
+    throw std::overflow_error("Timeline fence target overflow");
+  const u64 nextTarget = target + 1u;
+  if(FAILED(GetQueueHandle(queue).Signal(&fence.GetHandle(), nextTarget)))
+    return false;
+  fence.m_target.store(nextTarget);
+  return true;
 }
 
 bool Device::Signal(QueueType queue, Fence& fence, u64 value)
 {
-  return SUCCEEDED(
-    GetQueueHandle(queue).Signal(&fence.GetHandle(), value));
+  if(!isValid(queue))
+    throw std::invalid_argument("Queue type is invalid");
+  if(&fence.m_device != this)
+    throw std::invalid_argument(
+      "Signal fence belongs to a different device");
+  std::scoped_lock queueLock(*m_queues[enumValue(queue)].mutex);
+  std::scoped_lock targetLock(fence.m_targetMutex);
+  if(value < fence.m_target.load())
+    throw std::invalid_argument(
+      "Timeline fence target cannot move backwards");
+  if(FAILED(GetQueueHandle(queue).Signal(&fence.GetHandle(), value)))
+    return false;
+  fence.m_target.store(value);
+  return true;
 }
 
 void Device::WaitIdle(QueueType queue)
 {
-  // TODO
-  VD_UNUSED(queue);
+  if(!isValid(queue))
+    throw std::invalid_argument("Queue type is invalid");
+  std::scoped_lock queueLock(*m_queues[enumValue(queue)].mutex);
+  Fence fence{*this, "WaitIdle", Fence::Type::Timeline};
+  if(!Signal(queue, fence))
+    throw std::runtime_error("Failed to signal queue idle fence");
+  if(!fence.Wait())
+    throw std::runtime_error("Failed to wait for queue idle fence");
 }
 
 void Device::WaitIdle()
 {
-  // TODO
+  for(auto queue: QueueTypes) WaitIdle(queue);
 }
 
 void Device::ReportLiveObjects() const
@@ -185,9 +272,24 @@ void Device::create_physicalDevice(const Desc& desc)
       if((dxgiAdapterDesc1.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0)
         continue;
 
-      if(SUCCEEDED(D3D12CreateDevice(
-           dxgiAdapter1.Get(), D3D_FEATURE_LEVEL_12_1,
-           __uuidof(ID3D12Device), nullptr))) {
+      const D3D_FEATURE_LEVEL featureLevels[] = {
+        D3D_FEATURE_LEVEL_12_1,
+        D3D_FEATURE_LEVEL_12_0,
+        D3D_FEATURE_LEVEL_11_1,
+        D3D_FEATURE_LEVEL_11_0,
+      };
+
+      bool supportsD3D12 = false;
+      for(const auto featureLevel: featureLevels) {
+        if(SUCCEEDED(D3D12CreateDevice(
+             dxgiAdapter1.Get(), featureLevel, IID_ID3D12Device,
+             nullptr))) {
+          supportsD3D12 = true;
+          break;
+        }
+      }
+
+      if(supportsD3D12) {
         if(dxgiAdapterDesc1.DedicatedVideoMemory > maxMemory) {
           maxMemory = dxgiAdapterDesc1.DedicatedVideoMemory;
           VDDxTry(dxgiAdapter1.As(&adapter));
@@ -214,9 +316,20 @@ void Device::create_device(const Desc& desc)
     size32(experimentalFeatures), std::data(experimentalFeatures),
     nullptr, nullptr);
 
-  VDDxTry(D3D12CreateDevice(
-    m_physicalDevice->GetHandle(), D3D_FEATURE_LEVEL_12_1,
-    IID_PPV_ARGS(&m_handle)));
+  const D3D_FEATURE_LEVEL featureLevels[] = {
+    D3D_FEATURE_LEVEL_12_1,
+    D3D_FEATURE_LEVEL_12_0,
+    D3D_FEATURE_LEVEL_11_1,
+    D3D_FEATURE_LEVEL_11_0,
+  };
+
+  HRESULT createResult = E_FAIL;
+  for(const auto featureLevel: featureLevels) {
+    createResult = D3D12CreateDevice(
+      m_physicalDevice->GetHandle(), featureLevel, IID_PPV_ARGS(&m_handle));
+    if(SUCCEEDED(createResult)) break;
+  }
+  VDDxTry(createResult);
 
   m_handle->SetName(widen("Vuldir DX Device").c_str());
 
@@ -235,8 +348,6 @@ void Device::create_device(const Desc& desc)
           D3D12_MESSAGE_SEVERITY_WARNING, TRUE);
       }
 
-      // D3D12_MESSAGE_CATEGORY Categories[] = {};
-
       D3D12_MESSAGE_SEVERITY Severities[] = {
         D3D12_MESSAGE_SEVERITY_INFO};
 
@@ -247,8 +358,6 @@ void Device::create_device(const Desc& desc)
       };
 
       D3D12_INFO_QUEUE_FILTER NewFilter = {};
-      // NewFilter.DenyList.NumCategories = _countof(Categories);
-      // NewFilter.DenyList.pCategoryList = Categories;
       NewFilter.DenyList.NumSeverities = _countof(Severities);
       NewFilter.DenyList.pSeverityList = Severities;
       NewFilter.DenyList.NumIDs        = _countof(DenyIds);
@@ -273,9 +382,7 @@ void Device::create_device(const Desc& desc)
         .NodeMask = 0};
 
       auto& queue = m_queues[enumValue(std::get<0>(ci))];
-      // TODO: Need this?
-      //queue.fence =
-      //  std::make_unique<Fence>(*this, Fence::Type::Timeline);
+      queue.mutex = std::make_shared<std::recursive_mutex>();
       VDDxTry(m_handle->CreateCommandQueue(
         &queueDesc, IID_PPV_ARGS(&queue.handle)));
     }
@@ -287,199 +394,4 @@ void Device::create_device(const Desc& desc)
 
 void Device::onDeviceRemoved()
 {
-  /*
-  static constexpr const char* D3D12_OpNames[] = {
-    "SetMarker",
-    "BeginEvent",
-    "EndEvent",
-    "DrawInstanced",
-    "DrawIndexedInstanced",
-    "ExecuteIndirect",
-    "Dispatch",
-    "CopyBufferRegion",
-    "CopyTextureRegion",
-    "CopyResource",
-    "CopyTiles",
-    "ResolveSubresource",
-    "ClearRenderTargetView",
-    "ClearUnorderedAccessView",
-    "ClearDepthStencilView",
-    "ResourceBarrier",
-    "ExecuteBundle",
-    "Present",
-    "ResolveQueryData",
-    "BeginSubmission",
-    "EndSubmission",
-    "DecodeFrame",
-    "ProcessFrames",
-    "AtomicCopyBufferUint",
-    "AtomicCopyBufferUint64",
-    "ResolveSubresourceRegion",
-    "WriteBufferImmediate",
-    "DecodeFrame1",
-    "SetProtectedResourceSession",
-    "DecodeFrame2",
-    "ProcessFrames1",
-    "BuildRaytracingAccelerationStructure",
-    "EmitRaytracingAccelerationStructurePostBuildInfo",
-    "CopyRaytracingAccelerationStructure",
-    "DispatchRays",
-    "InitializeMetaCommand",
-    "ExecuteMetaCommand",
-    "EstimateMotion",
-    "ResolveMotionVectorHeap",
-    "SetPipelineState1",
-    "InitializeExtensionCommand",
-    "ExecuteExtensionCommand",
-  };
-
-  ComPtr<ID3D12DeviceRemovedExtendedData1> dred;
-  m_handle->QueryInterface(IID_PPV_ARGS(&dred));
-
-  D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT1 breadcrumbs{};
-  dred->GetAutoBreadcrumbsOutput1(&breadcrumbs);
-
-  VDLogW("Gathered auto-breadcrumbs output.");
-  if(breadcrumbs.pHeadAutoBreadcrumbNode) {
-    VDLogW("DRED: Last tracked GPU operations:");
-
-    Str                          ContextStr;
-    Map<int32_t, const wchar_t*> ContextStrings;
-
-    u32  TracedCommandLists = 0;
-    auto Node               = breadcrumbs.pHeadAutoBreadcrumbNode;
-
-    while(Node && Node->pLastBreadcrumbValue) {
-      int32_t LastCompletedOp = *Node->pLastBreadcrumbValue;
-
-      if(
-        LastCompletedOp != (i32)Node->BreadcrumbCount &&
-        LastCompletedOp != 0) {
-        VDLogW(
-          "DRED: Commandlist \"%ls\" on CommandQueue \"%ls\", %d "
-          "completed of %d",
-          Node->pCommandListDebugNameW, Node->pCommandQueueDebugNameW,
-          LastCompletedOp, Node->BreadcrumbCount);
-        TracedCommandLists++;
-
-        i32 FirstOp = std::max(LastCompletedOp - 100, 0);
-        i32 LastOp  = std::min(
-           LastCompletedOp + 20, i32(Node->BreadcrumbCount) - 1);
-
-        ContextStrings.clear();
-        for(u32 idx = 0; idx < Node->BreadcrumbContextsCount; ++idx) {
-          const auto& Context = Node->pBreadcrumbContexts[idx];
-          ContextStrings.emplace(
-            Context.BreadcrumbIndex, Context.pContextString);
-        }
-
-        for(i32 Op = FirstOp; Op <= LastOp; ++Op) {
-          D3D12_AUTO_BREADCRUMB_OP BreadcrumbOp =
-            Node->pCommandHistory[Op];
-
-          auto OpContextStr = ContextStrings.find(Op);
-          if(OpContextStr != std::end(ContextStrings)) {
-            ContextStr = " [";
-            ContextStr += vd::narrow(OpContextStr->second);
-            ContextStr += "]";
-          } else {
-            ContextStr.clear();
-          }
-
-          const auto* OpName =
-            ((u32)BreadcrumbOp < std::size(D3D12_OpNames))
-              ? D3D12_OpNames[BreadcrumbOp]
-              : "Unknown Op";
-
-          VDLogW(
-            "\tOp: %d, %s%s%s", Op, OpName, ContextStr.c_str(),
-            (Op + 1 == LastCompletedOp) ? " - LAST COMPLETED" : "");
-        }
-      }
-
-      Node = Node->pNext;
-    }
-
-    if(TracedCommandLists == 0) {
-      VDLogW(
-        "DRED: No command list found with active outstanding "
-        "operations (all finished or not started yet).");
-    }
-  }
-
-  D3D12_DRED_PAGE_FAULT_OUTPUT pagefault{};
-  dred->GetPageFaultAllocationOutput(&pagefault);
-
-  VDLogW("Gathered page fault allocation output.");
-
-  D3D12_GPU_VIRTUAL_ADDRESS OutPageFaultGPUAddress =
-    pageFault->PageFaultVA;
-  VDLogW(
-    "DRED: PageFault at VA GPUAddress \"0x%llX\"",
-    (long long)OutPageFaultGPUAddress);
-
-  const auto* Node = pageFault->pHeadExistingAllocationNode;
-  if(Node) {
-    VDLogW(
-      "DRED: Active objects with VA ranges that match the faulting "
-      "VA:");
-    while(Node) {
-      // When tracking all allocations then empty named dummy resources (heap & buffer)
-      // are created for each texture to extract the GPUBaseAddress so don't write these out
-      if(Node->ObjectNameW) {
-        int32_t alloc_type_index =
-          Node->AllocationType -
-          D3D12_DRED_ALLOCATION_TYPE_COMMAND_QUEUE;
-        const TCHAR* AllocTypeName =
-          (alloc_type_index < D3D12_AllocTypesNamesCount)
-            ? D3D12_AllocTypesNames[alloc_type_index]
-            : TEXT("Unknown Alloc");
-        if constexpr(std::is_same_v<
-                       std::remove_reference_t<T>,
-                       D3D12_DRED_PAGE_FAULT_OUTPUT1>) {
-          VDLogW(
-            "\tObject: %p, Name: %ls (Type: %ls)", Node->pObject,
-            Node->ObjectNameW, AllocTypeName);
-        } else {
-          VDLogW(
-            "\tName: %ls (Type: %ls)", Node->ObjectNameW,
-            AllocTypeName);
-        }
-      }
-      Node = Node->pNext;
-    }
-  }
-
-  Node = pageFault->pHeadRecentFreedAllocationNode;
-  if(Node) {
-    VDLogW(
-      "DRED: Recent freed objects with VA ranges that match the "
-      "faulting VA:");
-    while(Node) {
-      // See comments above
-      if(Node->ObjectNameW) {
-        int32_t alloc_type_index =
-          Node->AllocationType -
-          D3D12_DRED_ALLOCATION_TYPE_COMMAND_QUEUE;
-        const TCHAR* AllocTypeName =
-          (alloc_type_index < D3D12_AllocTypesNamesCount)
-            ? D3D12_AllocTypesNames[alloc_type_index]
-            : TEXT("Unknown Alloc");
-        if constexpr(std::is_same_v<
-                       std::remove_reference_t<T>,
-                       D3D12_DRED_PAGE_FAULT_OUTPUT1>) {
-          VDLogW(
-            "\tObject: %p, Name: %ls (Type: %ls)", Node->pObject,
-            Node->ObjectNameW, AllocTypeName);
-        } else {
-          VDLogW(
-            "\tName: %ls (Type: %ls)", Node->ObjectNameW,
-            AllocTypeName);
-        }
-      }
-
-      Node = Node->pNext;
-    }
-  }
-  */
 }

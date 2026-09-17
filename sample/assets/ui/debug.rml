@@ -1,0 +1,107 @@
+<rml>
+<head>
+  <title>Vuldir Debug</title>
+  <link type="text/rcss" href="debug.rcss"/>
+</head>
+<body data-model="ctrl">
+  <div class="panel" id="debug_panel" data-class-collapsed="!panelOpen">
+    <div class="panel-header">
+      <button class="collapse-toggle" data-event-click="panelOpen = !panelOpen">
+        <span class="collapse-arrow down" data-if="panelOpen"></span>
+        <span class="collapse-arrow right" data-if="!panelOpen"></span>
+      </button>
+    </div>
+
+    <div class="panel-content">
+    <tabset class="panel-tabs">
+    <tab>CONTROLS</tab>
+    <panel class="tab-page">
+    <div class="section">
+    <h2>Camera</h2>
+    <div class="row"><label>Auto orbit</label><div class="toggle-control"><input type="checkbox" data-checked="autoOrbit"/></div></div>
+    <div class="row slider-row"><label>Distance</label><input type="range" min="0.2" max="20" step="0.05" data-value="orbitDistance"/><span class="slider-value">{{ orbitDistance }}</span><button class="slider-reset" data-event-click="orbitDistance = 2.5">RESET</button></div>
+    <div class="row slider-row"><label>Field of view</label><input type="range" min="20" max="120" step="1" data-value="fovYDeg"/><span class="slider-value">{{ fovYDeg }}</span><button class="slider-reset" data-event-click="fovYDeg = 50">RESET</button></div>
+    <div class="hint camera-hint"><span>LMB DRAG</span> Orbit <span>WHEEL</span> Zoom</div>
+    </div>
+
+    <div class="section">
+    <h2>Environment</h2>
+    <div class="row"><label>Use IBL</label><div class="toggle-control"><input type="checkbox" data-checked="iblEnabled" checked/></div></div>
+    <div class="row slider-row"><label>Intensity</label><input type="range" min="0" max="5" step="0.01" data-value="iblIntensity"/><span class="slider-value">{{ iblIntensity }}</span><button class="slider-reset" data-event-click="iblIntensity = 1">RESET</button></div>
+    <div class="row slider-row"><label>Rotation</label><input type="range" min="-3.14" max="3.14" step="0.01" data-value="iblRotationYaw"/><span class="slider-value">{{ iblRotationYaw }}</span><button class="slider-reset" data-event-click="iblRotationYaw = 0">RESET</button></div>
+    </div>
+
+    <div class="section">
+    <h2>Rendering</h2>
+    <div class="row slider-row"><label>Exposure</label><input type="range" min="0.05" max="5" step="0.01" data-value="exposure"/><span class="slider-value">{{ exposure }}</span><button class="slider-reset" data-event-click="exposure = 1">RESET</button></div>
+    <div class="row slider-row"><label>Gamma</label><input type="range" min="1" max="3" step="0.01" data-value="gamma"/><span class="slider-value">{{ gamma }}</span><button class="slider-reset" data-event-click="gamma = 2.2">RESET</button></div>
+    <div class="row">
+      <label>Output</label>
+      <select data-value="debugView">
+        <option value="0">Lit</option>
+        <option value="1">Albedo</option>
+        <option value="2">Normals</option>
+        <option value="3">Roughness</option>
+        <option value="4">Metallic</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>Anti-aliasing</label>
+      <select data-value="aaMode">
+        <option value="0">Off</option>
+        <option value="1">FXAA</option>
+        <option value="2">SMAA</option>
+      </select>
+    </div>
+    </div>
+
+    <div class="section scene-section">
+    <h2>Asset</h2>
+    <div class="btnrow">
+      <button class="primary" data-event-click="open_model()">Open glTF / GLB</button>
+      <button data-event-click="load_helmet()">Helmet</button>
+      <button data-event-click="load_cube()">Cube</button>
+      <button data-event-click="clear_scene()">Clear</button>
+    </div>
+    </div>
+
+    </panel>
+    <tab>SCENE</tab>
+    <panel class="tab-page scene-tab">
+      <div class="scene-tree" data-rml="sceneTreeRml"></div>
+    </panel>
+    </tabset>
+    </div>
+  </div>
+
+  <div class="stats-panel">
+    <div class="stats-header">
+      <div><span>PERFORMANCE</span><strong>{{ fps }}</strong><em>FPS</em></div>
+      <b>{{ frameTime }}</b>
+    </div>
+
+    <div class="graph frame-graph" data-rml="frameGraph"></div>
+
+    <div class="stats-grid">
+      <div class="stat"><span>1% LOW</span><b>{{ fpsLow1 }}</b></div>
+      <div class="stat"><span>0.1% LOW</span><b>{{ fpsLow01 }}</b></div>
+      <div class="stat"><span>PROCESS CPU</span><b>{{ processCpu }}</b></div>
+      <div class="stat"><span>PROCESS RAM</span><b>{{ processRam }}</b></div>
+    </div>
+
+    <div class="graph-label"><span>CPU HISTORY</span><b>{{ processCpu }}</b></div>
+    <div class="graph cpu-graph" data-rml="cpuGraph"></div>
+
+    <div class="resource-stats">
+      <div><span>GPU ALLOC</span><b>{{ gpuMemory }}</b></div>
+      <div><span>DESCRIPTORS</span><b>{{ descriptors }}</b></div>
+      <div class="resource-row">
+        <span>BUF {{ bufferCount }}</span>
+        <span>IMG {{ imageCount }}</span>
+        <span>PSO {{ pipelineCount }}</span>
+        <span>SHD {{ shaderLoadCount }}</span>
+      </div>
+    </div>
+  </div>
+</body>
+</rml>

@@ -14,7 +14,9 @@ class Image;
 class RenderContext
 {
 public:
-  struct Desc {};
+  struct Desc {
+    u32 maxFramesInFlight = 2u;
+  };
 
   struct Transfer {};
 
@@ -26,25 +28,44 @@ public:
 
   Device& GetDevice() const { return m_device; }
 
+  u32 GetMaxFramesInFlight() const { return m_framesInFlight; }
+  u32 GetFrameIndex() const { return m_frameIndex; }
+
+  // Prepares the current swapchain frame slot: waits that slot's fence,
+  // retires deferred resources, resets that slot's command buffers.
   void Reset();
 
   CommandBuffer& GetCmd(QueueType type)
   {
-    return *m_cmdBufs[enumValue(type)];
+    if(!isValid(type))
+      throw std::out_of_range("Queue type is invalid");
+    return *m_frames[m_frameIndex].cmdBufs[enumValue(type)];
   }
 
-  bool Write(Buffer& buffer, Span<u8 const> data);
+  // Synchronous upload. Records on the current Copy cmdbuf, then uses the
+  // Graphics cmdbuf for the final-state transition (and Vulkan QFOT
+  // acquire). Graphics must be Ready (not Recording, and not Closed
+  // without a Reset).
+  bool Write(
+    Buffer& buffer, Span<u8 const> data,
+    ResourceState finalState = ResourceState::ShaderResourceGraphics);
   template<typename T>
-  bool Write(Buffer& buffer, const T& data)
+  bool Write(
+    Buffer& buffer, const T& data,
+    ResourceState finalState = ResourceState::ShaderResourceGraphics)
   {
-    return Write(buffer, getBytes(data));
+    return Write(buffer, getBytes(data), finalState);
   }
 
-  bool Write(Image& image, Span<u8 const> data);
+  bool Write(
+    Image& image, Span<u8 const> data,
+    ResourceState finalState = ResourceState::ShaderResourceGraphics);
   template<typename T>
-  bool Write(Image& image, const T& data)
+  bool Write(
+    Image& image, const T& data,
+    ResourceState finalState = ResourceState::ShaderResourceGraphics)
   {
-    return Write(image, getBytes(data));
+    return Write(image, getBytes(data), finalState);
   }
 
   void Submit(
@@ -55,22 +76,30 @@ public:
   void WaitInFlightOperations();
 
 private:
+  struct FrameSlot {
+    SArr<UPtr<CommandPool>, QueueTypeCount>   cmdPools;
+    SArr<UPtr<CommandBuffer>, QueueTypeCount> cmdBufs;
+    UPtr<Fence>                               fence;
+    bool                                      submitted = false;
+  };
+
   Buffer& getStagingBuffer(u64 size);
-  Fence&  getInFlightFence();
+  void    returnStagingBuffer(Buffer& buffer);
+  void    retireFrame(u32 slot);
+  void    ensureGraphicsReady(CommandBuffer& graphicsCmd) const;
 
 private:
   Device& m_device;
   Desc    m_desc;
 
-  SArr<UPtr<CommandPool>, QueueTypeCount>   m_cmdPools;
-  SArr<UPtr<CommandBuffer>, QueueTypeCount> m_cmdBufs;
+  u32            m_framesInFlight;
+  u32            m_frameIndex;
+  u64            m_binderContext;
+  Arr<FrameSlot> m_frames;
 
   Fence             m_transfersFence;
-  Arr<UPtr<Fence>>  m_inFlightFences;
-  u32               m_inFlightFenceCount;
   Arr<UPtr<Buffer>> m_stagingBuffers;
   Arr<Buffer*>      m_freeStagingBuffers;
-  Arr<Buffer*>      m_buffersNeedingAcquire;
 };
 
 } // namespace vd

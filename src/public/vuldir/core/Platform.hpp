@@ -16,7 +16,7 @@
     #define VC_EXTRALEAN
   #endif
 
-  #include <Windows.h>
+  #include <windows.h>
 
   #undef CreateSemaphore
 
@@ -24,7 +24,11 @@
 
 #ifdef VD_OS_LINUX
   #include <dlfcn.h>
-  #include <xcb/xcb.h>
+  #if defined(VD_WINDOW_WAYLAND)
+    #include <wayland-client.h>
+  #elif defined(VD_WINDOW_XCB)
+    #include <xcb/xcb.h>
+  #endif
 #endif
 
 namespace Vuldir {}

@@ -20,11 +20,13 @@ public:
 
   [[nodiscard]] u32 Read(u32 count)
   {
+    if(count > 32u)
+      throw std::invalid_argument("BitIStream reads at most 32 bits");
     while(m_bufferSize < count) {
       if(m_cursor == m_bytes.end())
         throw std::runtime_error("Reached end of bit stream");
 
-      u32 byte = *m_cursor;
+      u64 byte = *m_cursor;
       m_buffer |= byte << m_bufferSize;
 
       m_cursor++;
@@ -32,7 +34,9 @@ public:
     }
 
     m_bufferSize -= count;
-    u32 value = m_buffer & ((1u << count) - 1u);
+    const u64 mask = count == 32u ? 0xffffffffull
+                                  : ((1ull << count) - 1u);
+    u32 value = static_cast<u32>(m_buffer & mask);
     m_buffer >>= count;
 
     return value;
@@ -46,18 +50,22 @@ public:
 
   [[nodiscard]] u32 Peek(u32 count)
   {
+    if(count > 32u)
+      throw std::invalid_argument("BitIStream peeks at most 32 bits");
     while(m_bufferSize < count) {
       if(m_cursor == m_bytes.end())
         throw std::runtime_error("Reached end of bit stream");
 
-      u32 byte = *m_cursor;
+      u64 byte = *m_cursor;
       m_buffer |= byte << m_bufferSize;
 
       m_cursor++;
       m_bufferSize += 8u;
     }
 
-    return m_buffer & ((1u << count) - 1u);
+    const u64 mask = count == 32u ? 0xffffffffull
+                                  : ((1ull << count) - 1u);
+    return static_cast<u32>(m_buffer & mask);
   }
 
   void Skip(u32 count) { [[maybe_unused]] auto v = Read(count); }
@@ -73,71 +81,41 @@ private:
   Span<u8 const>           m_bytes;
   Span<u8 const>::iterator m_cursor;
 
-  u32 m_buffer;
+  u64 m_buffer;
   u32 m_bufferSize;
 };
 
 class BitOStream
 {
 public:
-  BitOStream(u64 sizeHint = 0u): m_bytes{}, m_offset{0u}
+  BitOStream(u64 sizeHint = 0u): m_bytes{}, m_bitSize{0u}
   {
     if(sizeHint > 0u) m_bytes.reserve(sizeHint);
   }
 
   void Write(BitIStream& src, u64 count)
   {
-    for(;;) {
-      if(count >= 8u) {
-        Write(src.Read(8u), 8u);
-        count -= 8u;
-      } else {
-        u8 bitsLeft = toU8(count);
-        Write(src.Read(bitsLeft), bitsLeft);
-        break;
-      }
+    while(count > 0u) {
+      const u32 bits = static_cast<u32>(std::min<u64>(count, 32u));
+      Write(src.Read(bits), bits);
+      count -= bits;
     }
   }
 
   void Write(u32 v, u32 count)
   {
-    u32 bitsDone = 0u;
-    u32 bitsLeft = count;
-
-    if(m_offset == 0u) m_bytes.push_back(0u);
-
-    { // Write bits in the current byte.
-      u32 bitsToByteEnd = 8u - m_offset;
-      u32 writableBits  = std::min(count, bitsToByteEnd);
-
-      if(writableBits > 0u) {
-        u32 mask = (1 << writableBits) - 1;
-        m_bytes.back() |= (v & mask) << m_offset;
-        m_offset = (m_offset + writableBits) % 8u;
-      }
-
-      bitsDone += writableBits;
-      bitsLeft -= writableBits;
-    }
-
-    // Whole bytes
-    while((bitsDone + 8u) <= count) {
-      u8 byte = toU8((v >> bitsDone) & 0xff);
-      m_bytes.push_back(byte);
-      bitsDone += 8u;
-      bitsLeft -= 8u;
-    }
-
-    // Remaining bits.
-    if(bitsDone < count) {
-      u32 mask = (1 << bitsDone) - 1;
-      u8  bits = toU8((v >> bitsDone) & mask);
-      m_bytes.push_back(bits);
-      m_offset = bitsLeft;
+    if(count > 32u)
+      throw std::invalid_argument("BitOStream writes at most 32 bits");
+    for(u32 bit = 0u; bit < count; ++bit) {
+      const u32 offset = static_cast<u32>(m_bitSize % 8u);
+      if(offset == 0u) m_bytes.push_back(0u);
+      if((v & (1u << bit)) != 0u)
+        m_bytes.back() |= static_cast<u8>(1u << offset);
+      ++m_bitSize;
     }
   }
 
-  u64 size() { return (m_bytes.size() * 8u) - (8u - m_offset); }
+  u64 size() const { return m_bitSize; }
 
   Arr<u8>& data() { return m_bytes; }
 
@@ -145,20 +123,23 @@ public:
 
 private:
   Arr<u8> m_bytes;
-  u32     m_offset;
+  u64     m_bitSize;
 };
 
 class ByteIStream
 {
 public:
   ByteIStream(Span<u8 const> bytes):
-    m_bytes{bytes}, m_cursor{bytes.begin()}
+    m_bytes{bytes}, m_cursor{0u}
   {}
 
   template<typename T>
   [[nodiscard]] T Read()
   {
-    auto data = *getCursorData<T>();
+    static_assert(std::is_trivially_copyable_v<T>);
+    ensureAvailable(sizeof(T));
+    T data{};
+    std::memcpy(&data, getCursorPtr(), sizeof(T));
     m_cursor += sizeof(T);
     return data;
   }
@@ -172,7 +153,11 @@ public:
   template<typename T>
   T Peek() const
   {
-    return *getCursorData<T>();
+    static_assert(std::is_trivially_copyable_v<T>);
+    ensureAvailable(sizeof(T));
+    T data{};
+    std::memcpy(&data, getCursorPtr(), sizeof(T));
+    return data;
   }
 
   template<typename T>
@@ -184,6 +169,7 @@ public:
   template<typename T>
   [[nodiscard]] const T* ReadPtr()
   {
+    ensureAvailable(sizeof(T));
     auto* data = getCursorData<T>();
     m_cursor += sizeof(T);
     return data;
@@ -192,11 +178,13 @@ public:
   template<typename T>
   [[nodiscard]] const T* PeekPtr() const
   {
+    ensureAvailable(sizeof(T));
     return getCursorData<T>();
   }
 
   [[nodiscard]] Span<u8 const> ReadBytes(u64 size)
   {
+    ensureAvailable(size);
     auto* data = getCursorPtr();
     SkipBytes(size);
     return {data, size};
@@ -204,6 +192,7 @@ public:
 
   [[nodiscard]] Span<u8 const> PeekBytes(u64 size) const
   {
+    ensureAvailable(size);
     return {getCursorPtr(), size};
   }
 
@@ -217,13 +206,11 @@ public:
 
   void SkipBytes(u64 size)
   {
-    m_cursor += static_cast<Span<u8 const>::difference_type>(size);
+    ensureAvailable(size);
+    m_cursor += size;
   }
 
-  u64 GetOffset() const
-  {
-    return toU64(std::distance(m_bytes.begin(), m_cursor));
-  }
+  u64 GetOffset() const { return m_cursor; }
 
   u64 GetSizeLeft() const { return m_bytes.size() - GetOffset(); }
 
@@ -232,17 +219,30 @@ public:
   u64 size() const { return m_bytes.size(); }
 
 private:
-  const u8* getCursorPtr() const { return &(*m_cursor); }
+  void ensureAvailable(u64 size) const
+  {
+    if(size > GetSizeLeft())
+      throw std::out_of_range("ByteIStream: read past end of stream");
+  }
+
+  const u8* getCursorPtr() const
+  {
+    if(m_cursor == 0u) return m_bytes.data();
+    return m_bytes.data() + m_cursor;
+  }
 
   template<typename T>
   const T* getCursorData() const
   {
-    return reinterpret_cast<const T*>(getCursorPtr());
+    const auto* data = getCursorPtr();
+    if(reinterpret_cast<uintptr_t>(data) % alignof(T) != 0u)
+      throw std::runtime_error("ByteIStream: unaligned pointer access");
+    return reinterpret_cast<const T*>(data);
   }
 
 private:
-  Span<u8 const>           m_bytes;
-  Span<u8 const>::iterator m_cursor;
+  Span<u8 const> m_bytes;
+  u64            m_cursor;
 };
 
 class ByteOStream
@@ -273,14 +273,18 @@ private:
 struct MemoryStreambuf : std::streambuf {
   MemoryStreambuf(std::span<u8> buffer)
   {
-    char* first = reinterpret_cast<char*>(buffer.data());
+    char* first = buffer.empty()
+                    ? &m_empty
+                    : reinterpret_cast<char*>(buffer.data());
     setg(first, first, first + buffer.size());
   }
 
   MemoryStreambuf(Span<u8 const> buffer)
   {
-    char* first =
-      const_cast<char*>(reinterpret_cast<const char*>(buffer.data()));
+    char* first = buffer.empty()
+                    ? &m_empty
+                    : const_cast<char*>(
+                        reinterpret_cast<const char*>(buffer.data()));
     setg(first, first, first + buffer.size());
   }
 
@@ -288,19 +292,30 @@ struct MemoryStreambuf : std::streambuf {
     off_type off, std::ios_base::seekdir dir,
     std::ios_base::openmode) override
   {
-    if(dir == std::ios_base::cur) gbump(static_cast<int>(off));
+    const off_type size = egptr() - eback();
+    off_type       base = 0;
+    if(dir == std::ios_base::cur)
+      base = gptr() - eback();
     else if(dir == std::ios_base::end)
-      setg(eback(), egptr() + off, egptr());
-    else if(dir == std::ios_base::beg)
-      setg(eback(), eback() + off, egptr());
-    return gptr() - eback();
+      base = size;
+    else if(dir != std::ios_base::beg)
+      return pos_type(off_type(-1));
+
+    if(off < -base || off > size - base)
+      return pos_type(off_type(-1));
+    const off_type target = base + off;
+    setg(eback(), eback() + target, egptr());
+    return pos_type(target);
   }
 
   pos_type seekpos(pos_type sp, std::ios_base::openmode which) override
   {
-    return seekoff(
-      sp - pos_type(off_type(0)), std::ios_base::beg, which);
+    const off_type offset = sp - pos_type(off_type(0));
+    return seekoff(offset, std::ios_base::beg, which);
   }
+
+private:
+  char m_empty = 0;
 };
 
 class IMemoryStream : public std::istream

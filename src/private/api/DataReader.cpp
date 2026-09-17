@@ -17,6 +17,7 @@ data::Image
 DataReader::ReadImage(std::istream& src, const ImageOptions& options)
 {
   if(isPng(src)) return readPng(src, options);
+  if(isHdr(src)) return readHdr(src, options);
 
   throw std::runtime_error("DataReader: Unsupported image format");
 }
@@ -61,7 +62,9 @@ DataReader::ReadModel(const fs::path& path, const ModelOptions& options)
   if(!fsOpt.basePath) fsOpt.basePath = path.parent_path();
 
   std::ifstream src(path, std::ios::binary);
-  if(!fsOpt.basePath) fsOpt.basePath = path.parent_path();
+  if(!src)
+    throw makeError<std::runtime_error>(
+      "DataReader: cannot access file %s", path.u8string().c_str());
   return ReadModel(src, fsOpt);
 }
 

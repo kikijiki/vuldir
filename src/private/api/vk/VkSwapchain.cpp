@@ -4,6 +4,8 @@
 #include "vuldir/api/Swapchain.hpp"
 #include "vuldir/api/vk/VkUti.hpp"
 
+#include <limits>
+
 using namespace vd;
 
 Swapchain::Swapchain(Device& device, const Desc& desc):
@@ -14,46 +16,66 @@ Swapchain::Swapchain(Device& device, const Desc& desc):
   m_imageCount{},
   m_imageIndex{0u},
   m_frameIndex{0u},
+  m_needsRecreate{false},
   m_acquireFences{},
   m_releaseFences{},
   m_waitFence{},
   m_handle{}
 {
-  create();
+  m_desc.maxFramesInFlight = std::max(1u, m_desc.maxFramesInFlight);
+  try {
+    create();
+  } catch(...) {
+    // A throwing constructor does not run Swapchain::~Swapchain.
+    destroy();
+    throw;
+  }
 }
 
 Swapchain::~Swapchain() { destroy(); }
 
 void Swapchain::Resize(Opt<UInt2> size)
 {
-  m_desc.size = size;
+  m_desc.size     = size;
+  m_needsRecreate = false;
   create();
 }
 
-Image& Swapchain::AcquireNextImage(bool wait)
+bool Swapchain::IsSurfaceExtentStale() const
+{
+  const auto    capabilities    = m_device.GetSurfaceCapabilities();
+  constexpr u32 kExtentFlexible = std::numeric_limits<uint32_t>::max();
+  if(capabilities.currentExtent.width == kExtentFlexible) return false;
+  return capabilities.currentExtent.width != m_extent[0] ||
+         capabilities.currentExtent.height != m_extent[1];
+}
+
+Image* Swapchain::AcquireNextImage(bool wait)
 {
   auto waitFence = wait ? m_waitFence->GetFenceHandle() : nullptr;
 
-  ///VDLogV(
-  ///  "Acquiring next swapchain image (wait: %s)",
-  ///  wait ? "true" : "false");
-  ///VDLogV("- Signals %s", GetAcquireFence().GetName().c_str());
-  ///if(waitFence) {
-  ///  VDLogV("- Signals %s", m_waitFence->GetName().c_str());
-  ///}
-
-  VDVkTry(m_device.api().AcquireNextImageKHR(
+  const VkResult result = m_device.api().AcquireNextImageKHR(
     m_handle, MaxU64, GetAcquireFence().GetSemaphoreHandle(), waitFence,
-    &m_imageIndex));
+    &m_imageIndex);
 
-  //VDLogV("Acquired image index %u", m_imageIndex);
+  if(result == VK_ERROR_OUT_OF_DATE_KHR) {
+    m_needsRecreate = true;
+    return nullptr;
+  }
+
+  if(result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+    VDVkTry(result);
+  }
+
+  if(result == VK_SUBOPTIMAL_KHR) { m_needsRecreate = true; }
 
   if(wait) {
-    m_waitFence->Wait(MaxU64);
+    if(!m_waitFence->Wait(MaxU64))
+      throw std::runtime_error("Failed to wait for acquired image");
     m_waitFence->Reset();
   }
 
-  return *m_images[m_imageIndex];
+  return m_images[m_imageIndex].get();
 }
 
 u32 vd::Swapchain::NextFrame()
@@ -77,11 +99,22 @@ void Swapchain::Present()
     .pImageIndices      = &m_imageIndex,
     .pResults           = &result};
 
-  //VDLogV("Presenting swapchain image");
-  //VDLogV("- Waits %s", GetReleaseFence().GetName().c_str());
+  const auto& queue =
+    m_device.m_queues[enumValue(QueueType::Graphics)];
+  std::scoped_lock queueLock(*queue.mutex);
+  const VkResult presentResult =
+    m_device.api().QueuePresentKHR(queue.handle, &info);
 
-  VDVkTry(m_device.api().QueuePresentKHR(
-    m_device.GetQueueHandle(QueueType::Graphics), &info));
+  if(
+    presentResult == VK_ERROR_OUT_OF_DATE_KHR ||
+    presentResult == VK_SUBOPTIMAL_KHR ||
+    result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+    m_needsRecreate = true;
+    return;
+  }
+
+  if(presentResult != VK_SUCCESS) { VDVkTry(presentResult); }
+  if(result != VK_SUCCESS) { VDVkTry(result); }
 }
 
 void Swapchain::create()
@@ -91,14 +124,55 @@ void Swapchain::create()
   const auto familyIndex = m_device.GetQueueFamily(QueueType::Graphics);
   const auto availableModes =
     m_device.GetPhysicalDevice().GetPresentModes(surface);
-  const auto minImageCount = vd::clamp(
-    m_desc.minImageCount, capabilities.minImageCount,
-    capabilities.maxImageCount);
+  const auto minImageCount = capabilities.maxImageCount == 0u
+                               ? std::max(
+                                   m_desc.minImageCount,
+                                   capabilities.minImageCount)
+                               : vd::clamp(
+                                   m_desc.minImageCount,
+                                   capabilities.minImageCount,
+                                   capabilities.maxImageCount);
 
-  m_extent[0] = capabilities.currentExtent.width;
-  m_extent[1] = capabilities.currentExtent.height;
+  // A fixed currentExtent is mandatory: images that don't match the
+  // surface size corrupt presentation.
+  constexpr u32 kExtentFlexible = std::numeric_limits<uint32_t>::max();
+  if(capabilities.currentExtent.width != kExtentFlexible) {
+    m_extent[0] = capabilities.currentExtent.width;
+    m_extent[1] = capabilities.currentExtent.height;
+  } else {
+    // Surface leaves the size to us (Wayland). Use the requested size, else
+    // keep the current extent: minImageExtent is 1x1 and would collapse
+    // the swapchain on a Resize() with no explicit size.
+    UInt2 requested{
+      capabilities.minImageExtent.width,
+      capabilities.minImageExtent.height};
+    if(m_desc.size) requested = *m_desc.size;
+    else if(m_extent[0] != 0u && m_extent[1] != 0u)
+      requested = m_extent;
 
-  if(m_desc.size) { m_extent = *m_desc.size; }
+    m_extent[0] = vd::clamp(
+      requested[0], capabilities.minImageExtent.width,
+      capabilities.maxImageExtent.width);
+    m_extent[1] = vd::clamp(
+      requested[1], capabilities.minImageExtent.height,
+      capabilities.maxImageExtent.height);
+  }
+
+  VDLogV(
+    "Swapchain create: currentExtent=%ux%u descSize=%s -> using %ux%u "
+    "(min=%ux%u max=%ux%u)",
+    capabilities.currentExtent.width, capabilities.currentExtent.height,
+    m_desc.size ? "set" : "nullopt", m_extent[0], m_extent[1],
+    capabilities.minImageExtent.width,
+    capabilities.minImageExtent.height,
+    capabilities.maxImageExtent.width,
+    capabilities.maxImageExtent.height);
+
+  // Minimized / zero-sized surfaces cannot be presented.
+  if(m_extent[0] == 0u || m_extent[1] == 0u) {
+    m_needsRecreate = true;
+    return;
+  }
 
   VkSwapchainCreateInfoKHR swapchainCI{};
 
@@ -116,73 +190,87 @@ void Swapchain::create()
     swapchainCI.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     swapchainCI.queueFamilyIndexCount = 1u;
     swapchainCI.pQueueFamilyIndices   = &familyIndex;
-    swapchainCI.preTransform   = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-    swapchainCI.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    swapchainCI.preTransform =
+      vd::hasFlag(
+        capabilities.supportedTransforms,
+        VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
+        ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
+        : capabilities.currentTransform;
+
+    constexpr VkCompositeAlphaFlagBitsKHR alphaModes[] = {
+      VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+      VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+      VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
+      VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR};
+    for(const auto alphaMode: alphaModes) {
+      if(vd::hasFlag(capabilities.supportedCompositeAlpha, alphaMode)) {
+        swapchainCI.compositeAlpha = alphaMode;
+        break;
+      }
+    }
+    if(swapchainCI.compositeAlpha == 0u)
+      throw std::runtime_error(
+        "Surface exposes no supported composite-alpha mode");
     swapchainCI.clipped        = VK_TRUE;
     swapchainCI.surface        = surface;
     swapchainCI.oldSwapchain   = m_handle;
 
-    if(m_device.GetPhysicalDevice().IsPresentModeSupported(
-         m_device.GetSurface(), VK_PRESENT_MODE_MAILBOX_KHR)) {
+    // FIFO is always valid. Prefer MAILBOX when unlocked and available.
+    swapchainCI.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    if(
+      !m_desc.vsync &&
+      std::ranges::find(availableModes, VK_PRESENT_MODE_MAILBOX_KHR) !=
+        availableModes.end()) {
       swapchainCI.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
-    } else if(m_device.GetPhysicalDevice().IsPresentModeSupported(
-                m_device.GetSurface(), VK_PRESENT_MODE_FIFO_KHR)) {
-      swapchainCI.presentMode = VK_PRESENT_MODE_FIFO_KHR;
-    } else {
-      swapchainCI.presentMode = VK_PRESENT_MODE_FIFO_KHR;
     }
   }
 
-  { // Sanity checks
+  { // Validate the selected surface configuration in every build type.
     if(
       capabilities.currentExtent.width !=
       std::numeric_limits<uint32_t>::max()) {
-      VDAssertMsg(
-        capabilities.currentExtent.width >=
-          capabilities.minImageExtent.width,
-        "Present width too small.");
-      VDAssertMsg(
-        capabilities.currentExtent.width <=
-          capabilities.maxImageExtent.width,
-        "Present width too big.");
-      VDAssertMsg(
-        capabilities.currentExtent.height >=
-          capabilities.minImageExtent.height,
-        "Present height too small.");
-      VDAssertMsg(
-        capabilities.currentExtent.height <=
-          capabilities.maxImageExtent.height,
-        "Present height too big.");
+      if(
+        capabilities.currentExtent.width <
+          capabilities.minImageExtent.width ||
+        capabilities.currentExtent.width >
+          capabilities.maxImageExtent.width ||
+        capabilities.currentExtent.height <
+          capabilities.minImageExtent.height ||
+        capabilities.currentExtent.height >
+          capabilities.maxImageExtent.height)
+        throw std::runtime_error(
+          "Surface current extent is outside its advertised limits");
     }
 
-    VDAssertMsg(
-      m_device.GetPhysicalDevice().IsPresentModeSupported(
-        surface, swapchainCI.presentMode),
-      "Present mode not supported.");
-    VDAssertMsg(
-      m_device.GetPhysicalDevice().IsPresentFormatSupported(
+    if(
+      !m_device.GetPhysicalDevice().IsPresentModeSupported(
+        surface, swapchainCI.presentMode))
+      throw std::runtime_error("Selected present mode is unsupported");
+    if(
+      !m_device.GetPhysicalDevice().IsPresentFormatSupported(
         surface,
-        {swapchainCI.imageFormat, swapchainCI.imageColorSpace}),
-      "Present format not supported.");
-    VDAssertMsg(
-      capabilities.minImageCount == 0 ||
-        swapchainCI.minImageCount >= capabilities.minImageCount,
-      "Present image count not supported.");
-    VDAssertMsg(
-      capabilities.maxImageCount == 0 ||
-        swapchainCI.minImageCount <= capabilities.maxImageCount,
-      "Present image count not supported.");
+        {swapchainCI.imageFormat, swapchainCI.imageColorSpace}))
+      throw std::runtime_error("Selected present format is unsupported");
+    if(
+      swapchainCI.minImageCount < capabilities.minImageCount ||
+      (capabilities.maxImageCount != 0u &&
+       swapchainCI.minImageCount > capabilities.maxImageCount))
+      throw std::runtime_error("Selected swapchain image count is unsupported");
   }
 
-  // If there is an existing swapchain, wait for the gpu to be idle.
-  if(m_handle) { m_device.WaitIdle(QueueType::Graphics); }
+  // Finish all GPU work before retiring the old swapchain / semaphores.
+  if(m_handle) { m_device.WaitIdle(); }
 
   { // Create new swapchain and throw away the old resources if needed.
     VkSwapchainKHR newHandle;
     VDVkTry(
       m_device.api().CreateSwapchainKHR(&swapchainCI, &newHandle));
 
+    // destroy() clears m_handle; keep the new one.
+    const auto oldHandle = m_handle;
+    m_handle             = nullptr;
     destroy();
+    if(oldHandle) { m_device.api().DestroySwapchainKHR(oldHandle); }
     m_handle = newHandle;
   }
 
@@ -190,13 +278,19 @@ void Swapchain::create()
     VDVkTry(m_device.api().GetSwapchainImagesKHR(
       m_handle, &m_imageCount, nullptr));
 
+    // Acquire semaphores: one per frame-in-flight.
+    // Release/present semaphores: one per swapchain image.
+    for(u32 idx = 0u; idx < m_desc.maxFramesInFlight; ++idx) {
+      m_acquireFences.push_back(
+        std::make_unique<Fence>(
+          m_device, formatString("SwapchainAcquire #%u", idx),
+          Fence::Type::Binary));
+    }
     for(u32 idx = 0u; idx < m_imageCount; ++idx) {
-      m_acquireFences.push_back(std::make_unique<Fence>(
-        m_device, formatString("SwapchainAcquire #%u", idx),
-        Fence::Type::Binary));
-      m_releaseFences.push_back(std::make_unique<Fence>(
-        m_device, formatString("SwapchainRelease #%u", idx),
-        Fence::Type::Binary));
+      m_releaseFences.push_back(
+        std::make_unique<Fence>(
+          m_device, formatString("SwapchainRelease #%u", idx),
+          Fence::Type::Binary));
     }
     m_waitFence = std::make_unique<Fence>(
       m_device, "SwapchainWait", Fence::Type::Fence);
@@ -221,12 +315,18 @@ void Swapchain::create()
       m_images.push_back(std::move(image));
     }
   }
+
+  m_imageIndex    = 0u;
+  m_frameIndex    = 0u;
+  m_needsRecreate = false;
 }
 
 void Swapchain::destroy()
 {
   m_images.clear();
 
+  // Caller must have waited idle if the swapchain/semaphores may still
+  // be referenced by in-flight presents.
   if(m_handle) {
     m_device.api().DestroySwapchainKHR(m_handle);
     m_handle = nullptr;

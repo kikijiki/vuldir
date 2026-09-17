@@ -10,12 +10,12 @@ struct VDTraceContext;
 struct VDTraceContext {
   VDTraceContext(VDTraceContext* parent): prev{parent}, next{nullptr}
   {
-    prev->next = this;
+    if(prev) prev->next = this;
   }
 
   ~VDTraceContext()
   {
-    if(prev) { prev->next = nullptr; }
+    if(prev && prev->next == this) { prev->next = nullptr; }
   }
 
   VDTraceContext* prev;
@@ -27,13 +27,7 @@ inline static thread_local VDTraceContext* VD_TRACE_CONTEXT_HEAD =
 
 #define VD_MARKER_SCOPED()
 
-//#define VD_MARKER_SCOPED()                \
-//  {                               \
-//    VDLogI("%s\n", __FUNCTION__); \
-//  }
-
-#define VD_TRACE(MSG, ...)              \
-  VDTraceContext VD_UNIQUE(vdTraceCtx)( \
-    VD_TRACE_CONTEXT_HEAD, MSG, __VA_ARGS__);
+// Tracing is disabled. Arguments are not evaluated.
+#define VD_TRACE(...) ((void)0)
 
 } // namespace vd

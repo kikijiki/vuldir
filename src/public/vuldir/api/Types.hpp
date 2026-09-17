@@ -10,6 +10,14 @@ static constexpr u32 QueueTypeCount = 3u;
 static constexpr SArr<QueueType, QueueTypeCount> QueueTypes = {
   QueueType::Graphics, QueueType::Compute, QueueType::Copy};
 
+inline constexpr bool isValid(QueueType type)
+{
+  const auto value = enumValue(type);
+  return value >= 0 &&
+         value < static_cast<std::underlying_type_t<QueueType>>(
+                   QueueTypeCount);
+}
+
 enum class MemoryType { Main, Upload, Download };
 static constexpr u32 MemoryTypeCount = 3u;
 
@@ -55,19 +63,19 @@ enum class ResourceState {
   Undefined,
 
   // D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER
-  // VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT
+  // VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT
   VertexBuffer,
 
   // D3D12_RESOURCE_STATE_INDEX_BUFFER
-  // VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_INDEX_READ_BIT
+  // VK_ACCESS_INDEX_READ_BIT
   IndexBuffer,
 
   // D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER
-  // VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT
+  // VK_ACCESS_UNIFORM_READ_BIT
   ConstantBuffer,
 
   // D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT
-  // VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT
+  // VK_ACCESS_INDIRECT_COMMAND_READ_BIT
   IndirectArgument,
 
   // D3D12_RESOURCE_STATE_RENDER_TARGET
@@ -502,8 +510,10 @@ struct ViewRange {
 };
 
 struct DescriptorBinding {
-  DescriptorType type;
-  u32            index;
+  DescriptorType type  = DescriptorType::Sampler;
+  u32            index = MaxU32;
+
+  bool IsValid() const { return index != MaxU32; }
 };
 
 struct StencilOpState {

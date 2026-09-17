@@ -159,14 +159,8 @@ inline constexpr VkDescriptorType convert(DescriptorType v)
   switch(v) {
     case vd::DescriptorType::Sampler:
       return VK_DESCRIPTOR_TYPE_SAMPLER;
-    // case vd::DescriptorType::UniformBuffer:
-    //  return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     case vd::DescriptorType::StorageBuffer:
       return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    // case vd::DescriptorType::UniformTexelBuffer:
-    //  return VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
-    // case vd::DescriptorType::StorageTexelBuffer:
-    //  return VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
     case vd::DescriptorType::SampledImage:
       return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     case vd::DescriptorType::StorageImage:
@@ -184,15 +178,13 @@ inline constexpr VkAccessFlags toAccessFlags(ResourceState v)
     case ResourceState::Undefined:
       return VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
     case ResourceState::VertexBuffer:
-      return VK_ACCESS_SHADER_READ_BIT |
-             VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
+      return VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
     case ResourceState::IndexBuffer:
-      return VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT;
+      return VK_ACCESS_INDEX_READ_BIT;
     case ResourceState::ConstantBuffer:
-      return VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT;
+      return VK_ACCESS_UNIFORM_READ_BIT;
     case ResourceState::IndirectArgument:
-      return VK_ACCESS_SHADER_READ_BIT |
-             VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+      return VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
     case ResourceState::RenderTarget:
       return VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     case ResourceState::DepthStencilRW:
@@ -225,15 +217,13 @@ inline constexpr VkAccessFlags2 toAccessFlags2(ResourceState v)
     case ResourceState::Undefined:
       return VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
     case ResourceState::VertexBuffer:
-      return VK_ACCESS_2_SHADER_READ_BIT |
-             VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT;
+      return VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT;
     case ResourceState::IndexBuffer:
-      return VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT;
+      return VK_ACCESS_2_INDEX_READ_BIT;
     case ResourceState::ConstantBuffer:
-      return VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT;
+      return VK_ACCESS_2_UNIFORM_READ_BIT;
     case ResourceState::IndirectArgument:
-      return VK_ACCESS_2_SHADER_READ_BIT |
-             VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
+      return VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
     case ResourceState::RenderTarget:
       return VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
     case ResourceState::DepthStencilRW:
@@ -314,8 +304,9 @@ toPipelineStage2(ResourceState state)
       return VK_PIPELINE_STAGE_2_NONE;
 
     case ResourceState::VertexBuffer:
-    case ResourceState::IndexBuffer:
       return VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT;
+    case ResourceState::IndexBuffer:
+      return VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT;
 
     case ResourceState::ConstantBuffer:
       return VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
@@ -364,7 +355,7 @@ inline constexpr VkImageLayout getVkImageLayout(ResourceState v)
     case ResourceState::DepthStencilRW:
       return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     case ResourceState::DepthStencilRO:
-      return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+      return VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
     case ResourceState::ShaderResourceGraphics:
       return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     case ResourceState::ShaderResourceCompute:

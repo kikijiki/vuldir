@@ -44,13 +44,20 @@ public:
   const View& GetView() const { return m_view; }
 
 private:
+  friend class Binder;
+
+#ifdef VD_API_VK
+  Sampler(Device& device, const Desc& desc, bool bindless);
+#endif
+
   Device& m_device;
   Desc    m_desc;
 
 #ifdef VD_API_VK
 public:
   struct View {
-    VkSampler handle;
+    VkSampler         handle  = {};
+    DescriptorBinding binding = {};
   };
 #endif
 

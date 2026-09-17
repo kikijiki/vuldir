@@ -39,7 +39,7 @@ public:
     Viewport viewport = {};
     Rect     scissor  = {};
 
-    Format      depthStencilFormat;
+    Format      depthStencilFormat = Format::UNDEFINED;
     Arr<Format> colorFormats;
 
     PolygonMode polygonMode = PolygonMode::Fill;
@@ -93,7 +93,7 @@ public:
   };
 
   struct ComputeDesc {
-    Shader* CS;
+    Shader* CS = nullptr;
   };
 
 public:
@@ -108,6 +108,19 @@ public:
 private:
   void createGraphicsPipeline();
   void createComputePipeline();
+
+  // Shaders are only needed while the backend pipeline is built. m_desc
+  // outlives that (Bind reads topology), so clear the borrowed pointers
+  // to avoid dangling once the caller releases the shaders.
+  void releaseShaderRefs()
+  {
+    if(auto* graphics = std::get_if<GraphicsDesc>(&m_desc)) {
+      graphics->VS = nullptr;
+      graphics->PS = nullptr;
+    } else if(auto* compute = std::get_if<ComputeDesc>(&m_desc)) {
+      compute->CS = nullptr;
+    }
+  }
 
 private:
   Device& m_device;

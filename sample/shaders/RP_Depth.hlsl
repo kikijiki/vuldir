@@ -9,7 +9,7 @@ VSOut MainVS(VSIn input)
   VSOut ret = (VSOut)0;
 
   float4 wpos = mul(GetPrim().world, input.GetPosition());
-  ret.pos     = mul(GetScene().viewProjection, wpos);
+  ret.pos     = MeshClipPos(mul(GetScene().viewProjection, wpos));
 
   return ret;
 }

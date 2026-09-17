@@ -38,7 +38,6 @@ CPUDescriptorPool::Allocate(D3D12_DESCRIPTOR_HEAP_TYPE type, u32 count)
   Heap* targetHeap = nullptr;
   i32   heapOffset = -1;
 
-  // Try getting a heap already available.
   for(auto& heap: m_heaps) {
     if(heap.type != type) continue;
     if(heap.freeCount < count) continue;
@@ -50,7 +49,6 @@ CPUDescriptorPool::Allocate(D3D12_DESCRIPTOR_HEAP_TYPE type, u32 count)
     break;
   }
 
-  // If all full, allocate a new one.
   if(!targetHeap) {
     auto& heap = m_heaps.emplace_back();
     heap.index = toU32(m_heaps.size() - 1u);
@@ -73,13 +71,11 @@ CPUDescriptorPool::Allocate(D3D12_DESCRIPTOR_HEAP_TYPE type, u32 count)
     heapOffset = 0;
   }
 
-  // We got our heap, allocate and update heap state.
   targetHeap->freeCount -= count;
   for(auto idx = 0u; idx < count; ++idx) {
     targetHeap->free[toU32(heapOffset) + idx] = false;
   }
 
-  // Craft the handle.
   Handle handle{};
   handle.heapIdx   = targetHeap->index;
   handle.offset    = toU32(heapOffset);

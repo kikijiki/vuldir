@@ -1,5 +1,3 @@
-
-
 include(DXC)
 
 function(vd_add_shader)
@@ -24,23 +22,17 @@ function(vd_add_shader)
       continue()
     endif ()
 
-    #cmake_path(GET SHADER_SOURCE STEM LAST_ONLY SHADER_NAME)
     get_filename_component(SHADER_NAME ${SHADER_SOURCE} NAME_WE)
     set(SHADER_ID "${SHADER_NAME}.${SHADER_STAGE}")
 
-    # Cannot use generator expressions in `OUTPUT`,
-    # so I'm going to output everything in an intermediate folder first
-    # and then copy/rename as a separate step.
-    # Adding the config and target name to ensure they are unique.
+    # OUTPUT cannot use generator expressions, so build into an intermediate
+    # path (unique per target and config) and copy to the final location.
     set(INT_DIR  "${SHADER_OUTPUT}")
     set(INT_PATH "${INT_DIR}/${SHADER_TARGET}-$<CONFIG>-${SHADER_ID}")
     set(OUT_DIR  "$<TARGET_FILE_DIR:${SHADER_TARGET}>/${SHADER_OUTPUT}")
     set(OUT_PATH "${OUT_DIR}/${SHADER_ID}")
 
-    # Avoid evaluating shader dependencies at every cmake reconfiguration if nothing changed.
     file(TIMESTAMP "${SHADER_SOURCE}" SHADER_TIMESTAMP)
-    #if((NOT "${SHADER_TIMESTAMP}" STREQUAL "${${SHADER_ID}-CONFIG_TIME}") OR (NOT EXISTS "${SHADER_SOURCE}"))
-      
       set(${SHADER_ID}-CONFIG_TIME ${SHADER_TIMESTAMP} CACHE INTERNAL "")
 
       message(STATUS "Configuring shader target: ${SHADER_NAME}(${SHADER_STAGE_UPPER})")
@@ -51,7 +43,6 @@ function(vd_add_shader)
         -I ${VD_SHADER_INCLUDE_DIR}
         -E ${SHADER_ENTRYPOINT}
         -D ${SHADER_STAGE_DEFINITION}=1
-        #-no-legacy-cbuf-layout
         -res-may-alias)
 
       if(VD_API STREQUAL "vk")
@@ -96,7 +87,13 @@ function(vd_add_shader)
         list(FILTER SHADER_DEPS INCLUDE REGEX "Opening file")
         list(TRANSFORM SHADER_DEPS REPLACE "Opening file \\[(.+)\\], stack top.*" "\\1")
         list(TRANSFORM SHADER_DEPS STRIP)
-        cmake_path(CONVERT "${SHADER_DEPS}" TO_NATIVE_PATH_LIST SHADER_DEPS NORMALIZE)
+        set(NORMALIZED_SHADER_DEPS)
+        foreach(SHADER_DEP IN LISTS SHADER_DEPS)
+          cmake_path(NORMAL_PATH SHADER_DEP)
+          list(APPEND NORMALIZED_SHADER_DEPS "${SHADER_DEP}")
+        endforeach()
+        set(SHADER_DEPS ${NORMALIZED_SHADER_DEPS})
+        list(REMOVE_DUPLICATES SHADER_DEPS)
         message(STATUS "Found dependencies: ${SHADER_DEPS}")
       endif()
 
@@ -105,27 +102,22 @@ function(vd_add_shader)
       set(CMD_DEBUG   "${VD_DXC} ${DXC_ARGS_DBG_STR} -Fo ${INT_PATH}.cso")
       string(REPLACE " " ";" CMD_DEBUG ${CMD_DEBUG})
 
-      message(STATUS ${INT_PATH})
-
-      # The actual shader build command.
       add_custom_command(
-        #TARGET ${SHADER_TARGET} PRE_BUILD
         OUTPUT "${INT_PATH}.cso"
-        #WORKING_DIRECTORY "$<TARGET_FILE_DIR:${SHADER_TARGET}>"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${INT_DIR}"
-        # This does not seem to work, so I'm resorting to calling Execute.cmake
-        #COMMAND ${VD_DXC} ${DXC_ARGS} -Fo ${INT_PATH}.cso $<$<CONFIG:Debug>:-Fd ${INT_PATH}.pdb -Fc ${INT_PATH}.${SHADER_BYTECODE_EXT} -Cc -Zi -O0>
+        # Per-config command selection goes through Execute.cmake.
         COMMAND ${CMAKE_COMMAND}
           -Dconfig="$<CONFIG>"
           -Dcmd_debug="${CMD_DEBUG}"
           -Dcmd_release="${CMD_RELEASE}"
+          -Dcmd_releasedebug="${CMD_RELEASE}"
+          -Dcmd_profile="${CMD_RELEASE}"
+          -Dcmd_asan="${CMD_DEBUG}"
           -P "${CMAKE_SOURCE_DIR}/cmake/Execute.cmake"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${OUT_DIR}"
         COMMAND "${CMAKE_COMMAND}" -E copy "${INT_PATH}.cso" "${OUT_PATH}.cso"
         MAIN_DEPENDENCY ${SHADER_SOURCE}
-        # TODO: Re-enable DEPENDS in linux!
-        #DEPENDS ${SHADER_DEPS}
-        #DEPFILE "${SHADER_OUTPUT}/${SHADER_ID}.d"
+        DEPENDS ${SHADER_DEPS}
         COMMAND_EXPAND_LISTS
       )
       add_custom_target(
@@ -134,6 +126,5 @@ function(vd_add_shader)
       )
       add_dependencies(${SHADER_TARGET} "ST-${SHADER_ID}")
 
-    #endif()
   endforeach()
 endfunction()

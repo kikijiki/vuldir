@@ -1,26 +1,56 @@
 name: build
 
-on: [push]
+on: [push, pull_request]
 
 jobs:
   build:
-    name: ${{ matrix.target }}-${{ matrix.api }}-${{ matrix.config }}
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.target }}
     env:
-      CMAKE_VERISION: 4.0.0
-      NINJA_VERSION: 1.12.1
-      LLVM_VERSION: 20.1.1
+      CMAKE_VERSION: 4.3.4
+      NINJA_VERSION: 1.13.2
+      LLVM_VERSION: 20.1.8
       VULKAN_VERSION: 1.4.309.0
-      VULKAN_APT_VERSION: 1.4.309.0
     strategy:
       fail-fast: false
       matrix:
-        api: [vk, dx]
-        config: [debug, release]
-        target: [windows-latest, ubuntu-latest]
-        exclude:
-          - api: dx
+        include:
+          - name: windows-vk-debug
+            target: windows-latest
+            api: vk
+            config: debug
+          - name: windows-vk-release
+            target: windows-latest
+            api: vk
+            config: release
+          - name: windows-dx-debug
+            target: windows-latest
+            api: dx
+            config: debug
+          - name: windows-dx-release
+            target: windows-latest
+            api: dx
+            config: release
+          - name: ubuntu-vk-debug-wayland
             target: ubuntu-latest
+            api: vk
+            config: debug
+            window: wayland
+          - name: ubuntu-vk-release-wayland
+            target: ubuntu-latest
+            api: vk
+            config: release
+            window: wayland
+          - name: ubuntu-vk-debug-xcb
+            target: ubuntu-latest
+            api: vk
+            config: debug
+            window: xcb
+          - name: ubuntu-vk-release-xcb
+            target: ubuntu-latest
+            api: vk
+            config: release
+            window: xcb
 
     steps:
       - uses: actions/checkout@v4
@@ -59,28 +89,41 @@ jobs:
         timeout-minutes: 10
         run: |
           UBUNTU_CODENAME=$(lsb_release -cs)
-          LLVM_MAJOR=$(echo $LLVM_VERSION | cut -d. -f1)
+          LLVM_MAJOR=$(echo "$LLVM_VERSION" | cut -d. -f1)
 
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
           wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
 
-          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-${UBUNTU_CODENAME}.list http://packages.lunarg.com/vulkan/lunarg-vulkan-${UBUNTU_CODENAME}.list
+          sudo wget -qO "/etc/apt/sources.list.d/lunarg-vulkan-${UBUNTU_CODENAME}.list" "http://packages.lunarg.com/vulkan/lunarg-vulkan-${UBUNTU_CODENAME}.list"
           sudo add-apt-repository "deb http://apt.llvm.org/${UBUNTU_CODENAME}/ llvm-toolchain-${UBUNTU_CODENAME}-${LLVM_MAJOR} main"
 
           sudo apt update
           sudo apt install cmake ninja-build vulkan-sdk \
-            clang-${LLVM_MAJOR} clangd-${LLVM_MAJOR} clang-tidy-${LLVM_MAJOR} clang-format-${LLVM_MAJOR} clang-tools-${LLVM_MAJOR}
+            mesa-vulkan-drivers weston xvfb xauth libdbus-1-dev \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            libxcb1-dev libxcb-ewmh-dev libxcb-icccm4-dev libxcb-keysyms1-dev \
+            "clang-${LLVM_MAJOR}" "clangd-${LLVM_MAJOR}" "clang-tidy-${LLVM_MAJOR}" "clang-format-${LLVM_MAJOR}" "clang-tools-${LLVM_MAJOR}"
 
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-$LLVM_MAJOR 60
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-$LLVM_MAJOR 60
-          sudo update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-$LLVM_MAJOR 60
-          sudo update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-$LLVM_MAJOR 60
+          sudo update-alternatives --install /usr/bin/clang++ clang++ "/usr/bin/clang++-$LLVM_MAJOR" 60
+          sudo update-alternatives --install /usr/bin/clang clang "/usr/bin/clang-$LLVM_MAJOR" 60
+          sudo update-alternatives --install /usr/bin/clang-tidy clang-tidy "/usr/bin/clang-tidy-$LLVM_MAJOR" 60
+          sudo update-alternatives --install /usr/bin/clang-format clang-format "/usr/bin/clang-format-$LLVM_MAJOR" 60
+
+          # The runner's /usr/local LLVM can shadow update-alternatives.
+          # GITHUB_PATH is prepended for subsequent workflow steps.
+          test -x "/usr/lib/llvm-${LLVM_MAJOR}/bin/clang-tidy"
+          echo "/usr/lib/llvm-${LLVM_MAJOR}/bin" >> "$GITHUB_PATH"
 
       - name: Configure
         shell: cmake -P {0}
         run: |
+          set(configure_args --preset ninja-${{ matrix.api }})
+          if(NOT "${{ matrix.window }}" STREQUAL "")
+            list(APPEND configure_args -DVD_WINDOW_SYSTEM=${{ matrix.window }})
+          endif()
+
           execute_process(
-            COMMAND ${CMAKE_COMMAND} --preset ninja-${{ matrix.api }}
+            COMMAND ${CMAKE_COMMAND} ${configure_args}
             RESULT_VARIABLE result)
 
           if (NOT result EQUAL 0)
@@ -105,3 +148,7 @@ jobs:
             message("::error::${error_message}")
             message(FATAL_ERROR "Build failed")
           endif()
+
+      - name: Test (Linux Vulkan/${{ matrix.window }})
+        if: ${{ runner.os == 'Linux' && matrix.api == 'vk' }}
+        run: ./scripts/ci-test-vk.sh "${{ matrix.window }}" "${{ matrix.config }}"

@@ -58,11 +58,18 @@ inline D3D12_FILTER_TYPE convert(SamplerFilter v)
 }
 
 inline D3D12_FILTER
-convert(SamplerFilter min, SamplerFilter mag, SamplerFilter mip)
+convert(
+  SamplerFilter min, SamplerFilter mag, SamplerFilter mip,
+  bool anisotropyEnable, bool compareEnable)
 {
+  const auto reduction = compareEnable
+                           ? D3D12_FILTER_REDUCTION_TYPE_COMPARISON
+                           : D3D12_FILTER_REDUCTION_TYPE_STANDARD;
+  if(anisotropyEnable)
+    return D3D12_ENCODE_ANISOTROPIC_FILTER(reduction);
+
   return D3D12_ENCODE_BASIC_FILTER(
-    convert(min), convert(mag), convert(mip),
-    D3D12_FILTER_REDUCTION_TYPE_STANDARD);
+    convert(min), convert(mag), convert(mip), reduction);
 }
 
 inline D3D12_CLEAR_VALUE convert(const ClearValue& v)

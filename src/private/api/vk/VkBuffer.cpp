@@ -13,6 +13,9 @@ Buffer::Buffer(Device& device, const Desc& desc):
   m_memoryDesc{},
   m_handle{}
 {
+  if(m_desc.size == 0u)
+    throw std::invalid_argument("Buffer size must be non-zero");
+
   VkBufferCreateInfo ci{};
   ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
   ci.size  = desc.size;
@@ -29,8 +32,6 @@ Buffer::Buffer(Device& device, const Desc& desc):
   ci.usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
   if(desc.usage.IsSet(ResourceUsage::ShaderResource)) {
-    // ci.usage |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-    // ci.usage |= VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT;
     ci.usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     ci.usage |= VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT;
   }
@@ -46,25 +47,32 @@ Buffer::Buffer(Device& device, const Desc& desc):
     ci.usage |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
 
   VDVkTry(m_device.api().CreateBuffer(&ci, &m_handle));
+  try {
+    m_device.api().GetBufferMemoryRequirements(m_handle, &m_memoryDesc);
+    m_allocation = m_device.AllocateMemory(
+      desc.memoryType, m_memoryDesc.size, m_memoryDesc.alignment,
+      m_memoryDesc.memoryTypeBits);
+    if(!m_allocation.IsValid())
+      throw std::runtime_error("Failed to allocate memory");
 
-  m_device.api().GetBufferMemoryRequirements(m_handle, &m_memoryDesc);
-  m_allocation = m_device.AllocateMemory(
-    desc.memoryType, m_memoryDesc.size, m_memoryDesc.alignment);
-  if(!m_allocation.IsValid())
-    throw std::runtime_error("Failed to allocate memory");
+    VDVkTry(m_allocation.pool->Bind(m_handle, m_allocation));
 
-  VDVkTry(m_device.api().BindBufferMemory(
-    m_handle, m_allocation.pool->GetHandle(), m_allocation.offset));
+    if(desc.defaultView) { AddView(desc.defaultView.value()); }
 
-  if(desc.defaultView) { AddView(desc.defaultView.value()); }
-
-  if(!m_desc.name.empty())
-    m_device.SetObjectName(
-      m_handle, VK_OBJECT_TYPE_BUFFER, m_desc.name.c_str());
+    if(!m_desc.name.empty())
+      m_device.SetObjectName(
+        m_handle, VK_OBJECT_TYPE_BUFFER, m_desc.name.c_str());
+  } catch(...) {
+    m_device.api().DestroyBuffer(m_handle);
+    m_handle = nullptr;
+    throw;
+  }
+  ++m_device.m_bufferCount;
 }
 
 Buffer::~Buffer()
 {
+  --m_device.m_bufferCount;
   for(auto& view: m_views) {
     m_device.api().DestroyBufferView(view->handle);
     m_device.GetBinder().Unbind(view->binding);
@@ -80,21 +88,25 @@ Buffer::~Buffer()
 
 u32 Buffer::AddView(ViewType type, const ViewRange& range)
 {
+  m_views.reserve(m_views.size() + 1u);
   auto view      = std::make_unique<View>();
   view->resource = this;
   view->type     = type;
   view->range    = range;
 
-  // if(is a texel buffer) {
-  //  VkBufferViewCreateInfo ci{};
-  //  ci.sType  = VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO;
-  //  ci.buffer = m_handle;
-  //  ci.format = VK_FORMAT_UNDEFINED;
-  //  ci.offset = rangeoffset;
-  //  ci.range  = range.size;
-  //
-  //  VDVkTry(m_device.api().CreateBufferView(&ci, &view.handle));
-  //}
+  if(view->range.offset > m_desc.size)
+    throw makeError<std::invalid_argument>(
+      "Buffer view offset is out of range for '%s'",
+      m_desc.name.c_str());
+  if(view->range.size == MaxU64)
+    view->range.size = m_desc.size - view->range.offset;
+  if(
+    view->range.size == 0u ||
+    view->range.size > m_desc.size - view->range.offset) {
+    throw makeError<std::invalid_argument>(
+      "Buffer view size is out of range for '%s'",
+      m_desc.name.c_str());
+  }
 
   u32 idx = 0u;
   for(auto& v: m_views)
@@ -130,5 +142,22 @@ const Buffer::View* Buffer::GetView(ViewType type, u32 index) const
 
 bool Buffer::Write(Span<u8 const> data)
 {
+  if(data.size_bytes() > m_desc.size) {
+    VDLogE(
+      "Write exceeds the declared size of buffer '%s'",
+      m_desc.name.c_str());
+    return false;
+  }
   return m_allocation.pool->Write(m_allocation, data);
+}
+
+bool Buffer::Read(Span<u8> data)
+{
+  if(data.size_bytes() > m_desc.size) {
+    VDLogE(
+      "Read exceeds the declared size of buffer '%s'",
+      m_desc.name.c_str());
+    return false;
+  }
+  return m_allocation.pool->Read(m_allocation, data);
 }

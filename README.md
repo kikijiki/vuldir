@@ -1,305 +1,76 @@
 # VULDIR
 
+![Vuldir sample: DamagedHelmet with the debug UI open](docs/images/screenshot.png)
+
 ## Build Status
 
-| API | Config | Windows | Ubuntu |
-|-----|--------|---------|--------|
-| Vulkan | Debug | ![Windows-Vulkan-Debug](https://github.com/kikijiki/Vuldir/actions/workflows/build.yml/badge.svg?branch=master&event=push&jobName=windows-latest-vk-debug) | ![Ubuntu-Vulkan-Debug](https://github.com/kikijiki/Vuldir/actions/workflows/build.yml/badge.svg?branch=master&event=push&jobName=ubuntu-latest-vk-debug) |
-| Vulkan | Release | ![Windows-Vulkan-Release](https://github.com/kikijiki/Vuldir/actions/workflows/build.yml/badge.svg?branch=master&event=push&jobName=windows-latest-vk-release) | ![Ubuntu-Vulkan-Release](https://github.com/kikijiki/Vuldir/actions/workflows/build.yml/badge.svg?branch=master&event=push&jobName=ubuntu-latest-vk-release) |
-| DirectX 12 | Debug | ![Windows-DirectX-Debug](https://github.com/kikijiki/Vuldir/actions/workflows/build.yml/badge.svg?branch=master&event=push&jobName=windows-latest-dx-debug) | N/A |
-| DirectX 12 | Release | ![Windows-DirectX-Release](https://github.com/kikijiki/Vuldir/actions/workflows/build.yml/badge.svg?branch=master&event=push&jobName=windows-latest-dx-release) | N/A |
+[![build](https://github.com/kikijiki/Vuldir/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/kikijiki/Vuldir/actions/workflows/build.yml)
 
 ## What is Vuldir?
 
-Vuldir is a renderer that provides a unified API for Vulkan and DirectX 12.
-It does not use any third-party libraries, so stuff like PNG/glTF loading, memory allocators, math, etc. are implemented from scratch.
+Vuldir is a small rendering library with a shared API over Vulkan 1.3 and
+DirectX 12. Resource management, math, and PNG, HDR, JSON, and glTF loading are
+in-tree. The sample and tests fetch pinned external dependencies through CMake.
 
-## Does it work?
-
-I worked on this in my spare time to learn how to use Vulkan and DX12, so it's not really production-ready. It can somewhat load a simple glTF model and render it with both APIs.
+It is a learning renderer, not a production engine. The sample loads glTF scenes
+and runs the same renderer on both APIs.
 
 ## Build
 
-Pick your CMake configuration:
+Supported configurations combine:
 
-- API: Vulkan 1.3 or DirectX 12
-- OS: Windows or Linux (DX12 is Windows only)
-- Generator: Ninja or VS2022
-- Configuration: Debug or Release
-  - Affects shader build too
+- Vulkan 1.3 or DirectX 12.
+- Windows or Linux for Vulkan; Windows for native DirectX 12.
+- Ninja or Visual Studio 2022.
+- Debug, Release, or ASAN where provided by the presets.
 
-## Architecture Notes, TODOs, etc
+### Nix development shells
 
-### Compromises and simplifications
+```bash
+nix develop          # Vulkan / Linux; also loaded by .envrc
+nix develop .#dx12   # MinGW + Wine + vkd3d-proton + DXVK on x86_64 Linux
+```
 
-- No support for input attachments? These are important for pixel-local loads on tile-based architectures (mobile GPUs) but are not critical for desktop applications, and are not supported by DirectX.
-  - Still need to use attachments for render passes though.
-- No support for root descriptors because it does not have a Vulkan equivalent.
-- No support for Vulkan's combined image sampler.
-- Not using Vulkan render passes and framebuffer, instead using the newer [streamlined approach](https://www.khronos.org/blog/streamlining-render-passes).
+The DX12 shell creates and maintains `.wine-dx12`, including vkd3d-proton's
+`d3d12`/`d3d12core` and DXVK's `dxgi`. The recipes can be run from either shell:
 
-### Bindings
+```bash
+just build-vk && just run-vk
+just test-vk
+just build-dx && just run-dx
+just smoke-dx
+```
 
-Use bindless for everything (ok with Vulkan 1.2 without any extension).
-All the pipelines use the same [layout/signature](src/shaders/vuldir/Layout.hlsli).
+Native DX12 Linux builds are not supported; `build-dx` cross-compiles the
+Windows executable with MinGW and `run-dx` executes it through Wine. Translation
+layer behavior can differ from native Windows, and RenderDoc capture through
+Wine is best-effort.
 
-Basic model:
+## Sample debug UI
 
-- One single descriptor pool
-- One single descriptor set
-- One single descriptor layout
-  - For each descriptor type, allocate a big number (under the device limit)
-  - Stage flags: all.
-- 2 storage buffers per shader, one with the constants and one with the bindless resource indices
-- Push constants are used to reference the buffer for the current object
-  - One (index+offset) for constant buffer
-  - One (index+offset) for resource indices
+The sample has an RmlUi panel for camera, lighting, tonemapping, and G-buffer
+inspection. RmlUi is pinned to 6.1 and built only for the sample; CMake stages
+the UI documents and font next to the executable.
 
-Shader (generated from metadata):
+UI geometry is rasterized on the CPU into an RGBA8 overlay and blended onto the
+swapchain. It is a debugging UI, not a GPU RmlUi renderer.
 
-- push_constants struct holding 2 ints for the instance identity.
-- Declarations for the bindless resources:
-  - constants[] <- index using PC[0].
-  - resources[] <- index using PC[1], contains indices to shader resources below.
-  - Required shader resources:
-    - textures[]
-    - samplers[]
-  - On dx12 every array will be defined in a different space, same for vulkan.
+## Architecture
 
-Basic usage:
+A common resource and command API has Vulkan and DX12 backends. Pipelines share
+the bindless shader layout in
+[`Layout.hlsli`](src/shaders/vuldir/Layout.hlsli). Device-owned descriptor heaps,
+resource views, and samplers provide stable bindless indices; reuse is deferred
+until active frame contexts retire.
 
-- On resource creation, find range of free descriptor and "allocate" (index + size, ring buffer).
-  - The resource stays bound for its whole lifetime.
-- On queue submit, use a fence to detect completion. On completion, free the allocation.
+Each `RenderContext` owns a frame ring of command pools and command buffers for
+graphics, compute, and copy queues. Command buffers track virtual resource
+states while recording and atomically publish them after successful submission.
+Shared device queues and allocation structures are synchronized so independent
+contexts can record and submit concurrently.
 
-### Bindings
+Vulkan uses dynamic rendering rather than render-pass/framebuffer objects. The
+API deliberately omits backend-specific binding models such as DX12 root
+descriptors and Vulkan combined image samplers.
 
-DX:
-
-- RootSignature
-  - Static Sampler[]
-  - Root Parameter[]
-    - Type (Constant, Table, SRV, UAV, CBV)
-    - Visibility
-    - One of:
-      - Root constant
-        - Register
-        - Space
-        - Size
-      - Root descriptor
-        - Register
-        - Space
-      - Descriptor Table
-        - Range[]
-          - Type (SRV, UAV, CBV, SAMPLER)
-          - Count
-          - Base register
-          - Space
-
-VK:
-
-- PipelineLayout
-  - PushConstants[]
-    - Offset
-    - Size
-    - Flags
-  - DescriptorSetLayout[]
-    - DescriptorSetLayoutBinding[]
-      - Binding index
-      - Type (sampler, image, buffer, constant, ...)
-      - Count
-      - Flags
-      - Static Sampler[]
-
-DX<->VK
-
-- Root constant -> Push constant
-- Root descriptor -> NONE
-- Descriptor table -> Descriptor set
-
-#### Vulkan
-
-- Create descriptor pool
-- Allocate descriptor set (using layout)
-- Create descriptor update info
-- Set resources/views
-- Execute update
-- Bind descriptor sets
-- Draw
-
-#### DX12
-
-- Create CPU heap
-- Allocate descriptors (views)
-- Create GPU heap
-- Copy desscriptors (for binding)
-- Bind descriptors (update is done through mapped memory)
-- Bind gpu heap
-- Draw
-
-#### Interface
-
-Binding
-
-- Key
-  - Stages
-  - View type
-  - Set/Space idx
-  - Binding idx
-  - Count
-- Value
-  - View handle
-
-Layout
-
-- DX
-- VK
-  - Vector of DescriptorSetLayout
-
-Layout
-
-- Input: list of bindings
-- DX
-  - For each binding
-    - Add a heap type entry with an offset (increasing).
-    - Save offsets and ranges in temp variables.
-  - With the accumulate info, create the descriptor tables info and root parameters.
-  - With the root parameters, create the root signature.
-- VK
-  - For each binding
-    - Create DescriptorSetLayoutBinding and DescriptorBindingFlags.
-    - Create intermediate vulkan structs.
-    - Create PipelineLayoutCreateInfo and pipeline.
-
-#### Static samplers
-
-- Create sampler object
-  - Parameters are from the Desc, except binding index, set/space and stage visibility.
-  - For DX12 use `D3D12_SAMPLER_DESC`, then when binding convert to `D3D12_STATIC_SAMPLER_DESC`. There is nothing to create.
-  - For VK you need to create the sampler both for immutable and dynamic samplers.
-- Create layout
-  - Set index, set/space and stage visibility.
-  - Pass in layout desc for initialization.
-
-#### Binding set
-
-- Input: Layout
-- DX
-  - For each heap desc create a gpu range.
-  - Gpu heap auto expands like vector.
-  - Request is made to a descriptor pool.
-  - Result is stored in a map of heap type/range in the binding set.
-- VK
-  - For each set layout
-    - Allocate descriptor set (batch) (using pool)
-    - Store result.
-
-Update bindings:
-
-- For each binding:
-  - DX
-    - Copy cpu handles to gpu
-    - Heap type and offset are obtained from the set (map of key/layout).
-    - The destination gpu heap range too is obrained from the set.
-  - VK
-    - Fill WriteDescriptorSets and update.
-    - View descriptors are obtained from the views (create in the view CTOR).
-
-#### Bindless
-
-- GPU heap split in 2
-  - Top: normal descriptors
-  - Bottom: Bindless range
-
-### Resource state
-
-- Vertex buffer
-  - VK: VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT
-  - DX: D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER
-- Index buffer
-  - VK: VK_ACCESS_INDEX_READ_BIT
-  - DX: D3D12_RESOURCE_STATE_INDEX_BUFFER
-- Constant buffer
-  - VK: VK_ACCESS_UNIFORM_READ_BIT
-  - DX: D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER
-- Render target
-  - VK: VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT / VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-  - DX: D3D12_RESOURCE_STATE_RENDER_TARGET
-- Unordered access
-  - VK: VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT / VK_IMAGE_LAYOUT_GENERAL
-  - DX: D3D12_RESOURCE_STATE_UNORDERED_ACCESS
-- Depth (read)
-  - VK: VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT / VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL
-  - DX: D3D12_RESOURCE_STATE_DEPTH_READ
-- Depth (write)
-  - VK: VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT / VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL
-  - DX: D3D12_RESOURCE_STATE_DEPTH_WRITE
-- Shader resource
-  - VK: VK_ACCESS_SHADER_READ_BIT / VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-  - DX: D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
-- Copy source
-  - VK: VK_ACCESS_TRANSFER_READ_BIT / VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
-  - DX: D3D12_RESOURCE_STATE_COPY_SOURCE
-- Copy destination
-  - VK: VK_ACCESS_TRANSFER_WRITE_BIT / VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-  - DX: D3D12_RESOURCE_STATE_COPY_DEST
-- Present
-  - VK: VK_ACCESS_MEMORY_READ_BIT / VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-  - DX: D3D12_RESOURCE_STATE_PRESENT
-- Indirect argument
-  - VK: VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT
-  - DX: D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT
-
-### Resource creation
-
-#### Image
-
-- Create params
-  - Image type: 1D,2D,3D,cube
-    - VK: VkImageType
-    - DX: D3D12_RESOURCE_DIMENSION_TEXTUREXX
-  - Bind flags: renderTarget, depthStencil, shaderResource, unorderedAccess, constant, idxbuf, vtxbuf, ...
-    - VK: VkImageUsageFlagBits
-    - DX: D3D12_RESOURCE_FLAG_XX
-  - Format
-  - Sample count
-  - Size
-  - Mips
-- Handle
-  - VK: VkImage
-  - DX: ID3D12Resource
-
-#### Image view
-
-- Create params
-  - Image
-  - View dimension: 1D, 2D, 3D, cube
-    - VK: VkImageViewType
-    - DX: D3D12_SRV_DIMENSION_XX, D3D12_UAV_DIMENSION_XX
-  - Format (same as image)
-  - Subresource range (default: all)
-    - VK: VkImageSubresourceRange
-    - DX: XX_VIEW_DESC
-  - Aspect: color, depth, stencil, ... (get from format)
-    - VK: VkImageAspectFlagBits
-    - DX:
-- CTOR
-  - DX: Allocate handle from cpu pool.
-  - Create the view
-    - DX: CreateShaderResourceView, CreateUnorderedAccessView, CreateDepthStencilView
-    - VK: vkCreateImageView
-
-VK:
-
-- Create image
-- Create image view
-
-### Descriptor pools
-
-- Cpu visible descriptor heap (DX ONLY):
-  - Types: SRV, Sampler, RTV, DSV
-  - Owner: device
-- Shader visible descriptor heap:
-  - Types: SRV, Sampler
-  - Owner: context
-- They both have a cpu and gpu handle (handle to the first element + size).
+Details are in [`ARCHITECTURE.md`](docs/ARCHITECTURE.md).

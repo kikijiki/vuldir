@@ -56,7 +56,7 @@ public:
     bool operator!=(iterator other) const { return !(*this == other); }
     FlagType operator*() const
     {
-      return static_cast<FlagType>(1 << m_index);
+      return static_cast<FlagType>(MaskType{1} << m_index);
     }
 
     using difference_type   = u64;
@@ -106,7 +106,8 @@ public:
 
   bool IsBitSet(const u64 index) const
   {
-    return (m_mask & (1 << index)) != 0;
+    return index < MaskSize() &&
+           (m_mask & (MaskType{1} << index)) != 0;
   }
   bool IsSet(const FlagType flag) const
   {

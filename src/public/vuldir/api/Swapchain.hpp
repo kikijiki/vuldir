@@ -46,19 +46,44 @@ public:
   Format GetFormat() const { return m_desc.format; }
   void   Resize(Opt<UInt2> size = {});
 
-  Fence& GetAcquireFence() { return *m_acquireFences[m_frameIndex]; }
-  Fence& GetReleaseFence() { return *m_releaseFences[m_frameIndex]; }
+  // Acquire is per frame in flight. Release is per swapchain image, so
+  // we never signal a semaphore that Present still waits on.
+  Fence& GetAcquireFence()
+  {
+    if(m_frameIndex >= m_acquireFences.size())
+      throw std::out_of_range("Swapchain acquire fence is unavailable");
+    return *m_acquireFences[m_frameIndex];
+  }
+  Fence& GetReleaseFence()
+  {
+    if(m_imageIndex >= m_releaseFences.size())
+      throw std::out_of_range("Swapchain release fence is unavailable");
+    return *m_releaseFences[m_imageIndex];
+  }
 
   u32 GetImageIndex() const { return m_imageIndex; }
   u32 GetFrameIndex() const { return m_frameIndex; }
   u32 GetImageCount() const { return m_imageCount; }
+  u32 GetMaxFramesInFlight() const { return m_desc.maxFramesInFlight; }
+
+  // Set when acquire/present reports SUBOPTIMAL or OUT_OF_DATE.
+  bool NeedsRecreate() const { return m_needsRecreate; }
+  void ClearNeedsRecreate() { m_needsRecreate = false; }
+
+  // True when the surface size no longer matches the swapchain images
+  // (e.g. ConfigureNotify arrives before the surface extent updates).
+  bool IsSurfaceExtentStale() const;
 
   const Image::View*
   GetView(u32 idx, ViewType type = ViewType::RTV) const
   {
+    if(idx >= m_images.size())
+      throw std::out_of_range("Swapchain image index is out of range");
     return m_images[idx]->GetView(type);
   }
-  Image& AcquireNextImage(bool wait = false);
+  // Returns nullptr if the swapchain is out of date (caller must
+  // recreate before rendering).
+  Image* AcquireNextImage(bool wait = false);
   u32    NextFrame();
   void   Present();
 
@@ -76,6 +101,7 @@ private:
   u32   m_imageCount;
   u32   m_imageIndex;
   u32   m_frameIndex;
+  bool  m_needsRecreate = false;
 
   Arr<UPtr<Fence>> m_acquireFences;
   Arr<UPtr<Fence>> m_releaseFences;

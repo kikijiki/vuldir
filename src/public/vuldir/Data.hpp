@@ -33,7 +33,13 @@ enum class AccessorType {
 
 struct Buffer {
   Opt<Str> uri;
+  u64      byteLength = 0u;
   Arr<u8>  data;
+
+  // Views and accessors are validated against byteLength (as declared by
+  // the asset). data can still be empty when DataReader's uriFilter
+  // skipped loading it, so check this before dereferencing.
+  bool HasData() const { return data.size() >= byteLength; }
 };
 
 struct BufferView {
@@ -50,15 +56,15 @@ struct Accessor {
   u32           count;
   ComponentType componentType;
   AccessorType  type;
-  Opt<Float4>   min;
-  Opt<Float4>   max;
+  bool          normalized = false;
+  Opt<Arr<f32>> min;
+  Opt<Arr<f32>> max;
 };
 
 struct MeshPrimitive {
   struct Attribute {
     VertexAttribute type;
-    u32
-      typeIndex; // For attributes that can have multiple sets of value, like TEXCOORD_0,1,2...
+    u32 typeIndex; // Set index for multi-set attributes (TEXCOORD_n)
     u32 accessorIndex;
   };
   PrimitiveTopology topology;
@@ -129,6 +135,17 @@ struct Mesh {
   Arr<MeshPrimitive> primitives;
 };
 
+// Minimal glTF node: TRS or matrix only.
+struct Node {
+  Opt<Str>     name;
+  Opt<u32>     mesh;
+  Arr<u32>     children;
+  Opt<Float44> matrix;
+  Opt<Float3>  translation;
+  Opt<Float4>  rotation; // glTF quaternion xyzw
+  Opt<Float3>  scale;
+};
+
 struct Model {
   Str             uri;
   Arr<Buffer>     buffers;
@@ -139,6 +156,8 @@ struct Model {
   Arr<Sampler>    samplers;
   Arr<Texture>    textures;
   Arr<Material>   materials;
+  Arr<Node>       nodes;
+  Arr<u32>        rootNodes;
 };
 
 } // namespace vd::data
